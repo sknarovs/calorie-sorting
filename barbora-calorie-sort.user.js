@@ -440,6 +440,14 @@
     });
   }
 
+  function needsConfirm(count) {
+    return count > CONFIG.confirmAbove;
+  }
+
+  function estimateSeconds(count) {
+    return Math.max(1, Math.round(count / CONFIG.fetchesPerSecond));
+  }
+
   // All products of the category the user is looking at (current filters, every page), in site order.
   async function collectCategory(loc, deps) {
     const { signal, onPage, concurrency = CONFIG.listingConcurrency, maxPages = CONFIG.maxPages } = deps;
@@ -758,6 +766,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     sort(dir) {
+      if (this.allSorted) return this.switchDirection(dir);
       return this.isMultiPage() ? this.multiPageSort(dir) : this.onePageSort(dir);
     }
 
@@ -765,22 +774,39 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     // the list swap then hands that list to the site, which draws all products as normal cards.
     async multiPageSort(dir) {
       const { win, labels, boot, status } = this;
+      if (this.abort) this.abort.abort(); // a new choice replaces a running one
+      const ac = new AbortController();
+      this.abort = ac;
+      // Requests finishing after Cancel must not bring the status line back.
+      const progress = (text) => {
+        if (!ac.signal.aborted) status.progress(text, () => this.cancel());
+      };
       await this.loading;
-      status.progress(fill(labels.loadingPages, { n: 0 }));
+      if (ac.signal.aborted) return undefined;
+      progress(fill(labels.loadingPages, { n: 0 }));
       let products;
       try {
         products = await collectCategory(win.location, {
           fetch: win.fetch.bind(win),
-          onPage: (n) => status.progress(fill(labels.loadingPages, { n })),
+          signal: ac.signal,
+          onPage: (n) => progress(fill(labels.loadingPages, { n })),
         });
       } catch (error) {
+        if (ac.signal.aborted) return undefined;
         console.warn('[calorie-sort] could not load every page of the category', error);
         return this.fallbackToOnePage(dir);
       }
       const missing = products.filter((p) => !this.states.has(p.id));
+      const question = fill(labels.confirm, { n: missing.length, s: estimateSeconds(missing.length) });
+      if (needsConfirm(missing.length) && !win.confirm(question)) {
+        this.cancel();
+        return undefined;
+      }
       const { rateLimited } = await this.fetchMissing(missing, {
-        onProgress: (done, total) => status.progress(fill(labels.loadingNutrition, { done, total })),
+        signal: ac.signal,
+        onProgress: (done, total) => progress(fill(labels.loadingNutrition, { done, total })),
       });
+      if (ac.signal.aborted) return undefined;
       const sorted = sortProducts(products, this.states, dir);
       const failed = sorted.filter((p) => this.stateOf(p.id).status === 'failed').map((p) => p.id);
       const record = { key: listKey(win.location), dir, savedAt: Date.now(), products: sorted, failed, rateLimited };
@@ -825,6 +851,25 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         }, timeoutMs);
         observer.observe(this.container, { childList: true, subtree: true });
       });
+    }
+
+    cancel() {
+      if (this.abort) this.abort.abort();
+      this.abort = null;
+      this.status.clear();
+      if (this.sortControl) this.sortControl.show(null);
+    }
+
+    // In the all-sorted view every value is known already: re-sort the saved list and reload.
+    switchDirection(dir) {
+      const { win, boot } = this;
+      if (Date.now() - boot.record.savedAt > CONFIG.listTtlMs) return this.multiPageSort(dir); // stale: rebuild
+      const record = { ...boot.record, dir, products: sortProducts(boot.record.products, this.states, dir) };
+      if (!saveList(boot.session, record)) return this.fallbackToOnePage(dir);
+      markReload(boot.session, Date.now());
+      win.history.replaceState(null, '', sortedViewUrl(win.location, dir));
+      win.location.reload();
+      return undefined;
     }
 
     async fallbackToOnePage(dir) {
@@ -952,6 +997,8 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       loadList,
       runPool,
       fetchNutrition,
+      needsConfirm,
+      estimateSeconds,
       collectCategory,
       installSwapHook,
       markReload,

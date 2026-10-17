@@ -70,7 +70,8 @@ async function launchBrowser() {
 
 // intercept(req) returns 'abort', {status} (fake response) or undefined (let it through).
 // before is an extra page-start script that runs before the userscript.
-async function openCategory(browser, urlPath, { lang, before, intercept } = {}) {
+// productDelayMs slows replayed product pages, for tests that must act while they load.
+async function openCategory(browser, urlPath, { lang, before, intercept, productDelayMs = 0 } = {}) {
   if (lang) await browser.setCookie(...LANG_COOKIES[lang].map((c) => ({ ...c, domain: 'barbora.lv', path: '/' })));
   const page = await browser.newPage();
   await page.setViewport({ width: 1400, height: 1000 });
@@ -84,8 +85,12 @@ async function openCategory(browser, urlPath, { lang, before, intercept } = {}) 
     const route = routeFor(req.url());
     if (route === 'beacon') return req.respond({ status: 204, body: '' }).catch(ignoreGone);
     if (route === 'replay' && req.method() === 'GET') {
+      const delayMs = new URL(req.url()).pathname.startsWith('/produkti/') ? productDelayMs : 0;
       return recorded(req.url().split('#')[0], lang)
-        .then(({ status, contentType, body }) => req.respond({ status, contentType, body }))
+        .then(async ({ status, contentType, body }) => {
+          if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+          return req.respond({ status, contentType, body });
+        })
         .catch(ignoreGone);
     }
     return req.continue().catch(ignoreGone);
