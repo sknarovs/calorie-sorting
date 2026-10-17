@@ -473,6 +473,54 @@
     return products;
   }
 
+  // ---- Core: list swap ----
+
+  // Hands the site a saved, sorted product list in place of the one its page script assigns.
+  function installSwapHook(win, record) {
+    const swap = { swapped: false, original: null };
+    if (Array.isArray(win.b_productList)) {
+      // Injected after the page assigned its list: replace it, React may not have rendered yet.
+      swap.original = win.b_productList;
+      win.b_productList = record.products;
+      swap.swapped = true;
+      return swap;
+    }
+    try {
+      Object.defineProperty(win, 'b_productList', {
+        configurable: true,
+        enumerable: true,
+        get: () => record.products,
+        set: (value) => {
+          swap.original = value;
+          swap.swapped = true;
+        },
+      });
+    } catch (error) {
+      console.warn('[calorie-sort] could not hook the product list', error);
+    }
+    return swap;
+  }
+
+  // A short-lived flag set just before the script reloads the page, so the next load can tell
+  // "we reloaded but could not show the saved list" apart from a normal visit (no reload loops).
+  function markReload(storage, now) {
+    try {
+      storage.setItem(CONFIG.keys.reload, JSON.stringify({ at: now }));
+    } catch {
+      // Without the flag the saved list still guards against loops.
+    }
+  }
+
+  function consumeReload(storage, now) {
+    const flag = readJson(storage, CONFIG.keys.reload);
+    try {
+      storage.removeItem(CONFIG.keys.reload);
+    } catch {
+      // Nothing to clean up.
+    }
+    return Boolean(flag) && typeof flag.at === 'number' && now - flag.at <= CONFIG.reloadWindowMs;
+  }
+
   // ---- Browser ----
 
   const CARD_SELECTOR = 'li[data-cnstrc-item-id]';
@@ -674,19 +722,34 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         this.sortControl.install();
         if (boot.marker) this.sortControl.show(boot.marker);
       }
+      const allSortedView = Boolean(boot.swap && boot.swap.swapped);
+      if (allSortedView) {
+        // Every product here was processed before the reload: values come from the cache.
+        for (const id of boot.record.failed) this.states.set(id, { status: 'failed' });
+        for (const product of this.products) {
+          if (!this.states.has(product.id)) this.states.set(product.id, { status: 'failed' });
+        }
+      }
       this.decorator.start();
-      const missing = this.products.filter((p) => !this.states.has(p.id));
-      // Resolves only after the notice below, so it never overwrites a later sort flow's notice.
-      this.loading = this.fetchMissing(missing, {
-        onProgress: (done, total) => this.status.progress(fill(labels.loadingNutrition, { done, total })),
-      }).then((result) => {
-        const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
-        const text = composeNotice(labels, { failed, rateLimited: result.rateLimited });
-        if (text) this.status.notice(text);
-        else this.status.clear();
-        return result;
-      });
-      if (boot.marker) this.sort(boot.marker);
+      if (allSortedView) {
+        this.loading = Promise.resolve({ rateLimited: Boolean(boot.record.rateLimited), cancelled: false });
+      } else {
+        const missing = this.products.filter((p) => !this.states.has(p.id));
+        // Resolves only after the notice below, so it never overwrites a later sort flow's notice.
+        this.loading = this.fetchMissing(missing, {
+          onProgress: (done, total) => this.status.progress(fill(labels.loadingNutrition, { done, total })),
+        }).then((result) => {
+          const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
+          const text = composeNotice(labels, { failed, rateLimited: result.rateLimited });
+          if (text) this.status.notice(text);
+          else this.status.clear();
+          return result;
+        });
+      }
+      if (!boot.marker) return;
+      if (allSortedView) this.verifyAllSorted();
+      else if (boot.record || boot.justReloaded) this.fallbackToOnePage(boot.marker); // never reload twice
+      else this.sort(boot.marker);
     }
 
     isMultiPage() {
@@ -695,7 +758,83 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     sort(dir) {
-      return this.onePageSort(dir);
+      return this.isMultiPage() ? this.multiPageSort(dir) : this.onePageSort(dir);
+    }
+
+    // Collects every page of the category, saves the sorted list for this tab and reloads;
+    // the list swap then hands that list to the site, which draws all products as normal cards.
+    async multiPageSort(dir) {
+      const { win, labels, boot, status } = this;
+      await this.loading;
+      status.progress(fill(labels.loadingPages, { n: 0 }));
+      let products;
+      try {
+        products = await collectCategory(win.location, {
+          fetch: win.fetch.bind(win),
+          onPage: (n) => status.progress(fill(labels.loadingPages, { n })),
+        });
+      } catch (error) {
+        console.warn('[calorie-sort] could not load every page of the category', error);
+        return this.fallbackToOnePage(dir);
+      }
+      const missing = products.filter((p) => !this.states.has(p.id));
+      const { rateLimited } = await this.fetchMissing(missing, {
+        onProgress: (done, total) => status.progress(fill(labels.loadingNutrition, { done, total })),
+      });
+      const sorted = sortProducts(products, this.states, dir);
+      const failed = sorted.filter((p) => this.stateOf(p.id).status === 'failed').map((p) => p.id);
+      const record = { key: listKey(win.location), dir, savedAt: Date.now(), products: sorted, failed, rateLimited };
+      if (!saveList(boot.session, record)) return this.fallbackToOnePage(dir);
+      markReload(boot.session, Date.now());
+      win.history.replaceState(null, '', sortedViewUrl(win.location, dir));
+      win.location.reload();
+      return undefined;
+    }
+
+    // After the reload: did React draw the whole saved list? If not, sort what is on screen.
+    async verifyAllSorted() {
+      const { record, marker } = this.boot;
+      const total = record.products.length;
+      if (!(await this.waitForCardCount(total, CONFIG.verifyTimeoutMs))) return this.fallbackToOnePage(marker);
+      this.allSorted = true;
+      this.win.document.documentElement.classList.add('bcs-all-sorted');
+      if (this.sortControl) this.sortControl.show(marker);
+      this.status.notice(composeNotice(this.labels, { total, failed: record.failed.length, rateLimited: Boolean(record.rateLimited) }), {
+        label: this.labels.backToNormal,
+        onClick: () => this.backToNormal(),
+      });
+      return undefined;
+    }
+
+    waitForCardCount(count, timeoutMs) {
+      return new Promise((resolve) => {
+        const matches = () => this.decorator.ids().length === count;
+        if (matches()) {
+          resolve(true);
+          return;
+        }
+        const observer = new MutationObserver(() => {
+          if (!matches()) return;
+          observer.disconnect();
+          clearTimeout(timer);
+          resolve(true);
+        });
+        const timer = setTimeout(() => {
+          observer.disconnect();
+          resolve(matches());
+        }, timeoutMs);
+        observer.observe(this.container, { childList: true, subtree: true });
+      });
+    }
+
+    async fallbackToOnePage(dir) {
+      await this.onePageSort(dir);
+      this.status.notice(this.labels.fallback);
+    }
+
+    backToNormal() {
+      const { location } = this.win;
+      location.href = location.pathname + baseQuery(location.search);
     }
 
     // Reorders the cards already on screen with CSS `order`; React's DOM stays untouched.
@@ -771,7 +910,13 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
   }
 
   function start() {
-    const boot = { marker: parseMarker(location.hash) };
+    // Everything up to the list swap must happen now, before the page assigns its product list.
+    const session = safeStorage(() => window.sessionStorage);
+    const marker = parseMarker(location.hash);
+    const justReloaded = consumeReload(session, Date.now());
+    const record = marker ? loadList(session, listKey(location), marker, Date.now()) : null;
+    const swap = record ? installSwapHook(window, record) : null;
+    const boot = { marker, record, swap, justReloaded, session };
     let page = null;
     window.addEventListener('change', (event) => {
       const target = event.target;
@@ -808,6 +953,9 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       runPool,
       fetchNutrition,
       collectCategory,
+      installSwapHook,
+      markReload,
+      consumeReload,
     };
   } else {
     start();
