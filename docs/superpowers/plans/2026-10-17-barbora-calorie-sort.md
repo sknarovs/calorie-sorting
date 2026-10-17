@@ -1,5 +1,7 @@
 # Barbora Calorie Sort Implementation Plan
 
+> **Superseded in part (2026-10-17).** This plan built the first version. After first use, the whole-category view (Tasks 5's collection, 8 and most of 9) was removed and loading became on-demand and paced; see the revision note in the spec. The plan is kept as the record of how v1 was built.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A Tampermonkey userscript for barbora.lv. It shows kcal and protein per 100 g/ml on every category card and sorts a whole category by calories, using the site's own cards.

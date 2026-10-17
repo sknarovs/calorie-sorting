@@ -1,10 +1,12 @@
 # Barbora calorie sort
 
-A Tampermonkey userscript for [barbora.lv](https://barbora.lv). On every category page it adds a
-small badge to each product card with its calories and protein per 100 g/ml, read from the
-product's own nutrition table. It also adds two options to the site's **Kārtot pēc** dropdown that
-sort the **whole category** (every page, with your current filters) by calories, using Barbora's
-own product cards, so **Pievienot** keeps working.
+A Tampermonkey userscript for [barbora.lv](https://barbora.lv). It adds two options to the site's
+**Kārtot pēc** dropdown that sort the products on the current page by calories. The calorie and
+protein values (per 100 g/ml) are read from each product's own nutrition table and shown in a small
+box next to the price.
+
+Values are only loaded when you pick a calorie sort, so browsing the shop sends Barbora no extra
+requests.
 
 ## Install
 
@@ -16,26 +18,26 @@ own product cards, so **Pievienot** keeps working.
 
 ## Use
 
-- **Badges:** each card shows e.g. `172 kcal · 17 g olbaltumvielu` (hover for "per 100 g/ml").
-  `nav datu` means Barbora has no nutrition table for that product; `?` means its page couldn't be
-  loaded, and it will be tried again on your next visit.
-- **Sorting:** pick **Kalorijas (augoši)** or **Kalorijas (dilstoši)** in the dropdown.
-  - A one-page category is reordered on the spot.
-  - A bigger category is collected page by page (with a progress line and **Atcelt**), then shown
-    as one sorted list with the page links hidden.
-  - Products without a value always go last.
-- **Back to normal:** use **Atgriezties parastajā skatā** in the line above the list, or pick any
-  of the site's own sort options.
+- **Sort:** pick **Kalorijas (augoši)** or **Kalorijas (dilstoši)**. The script loads the values
+  it doesn't know yet for the products on this page, showing a progress line with **Atcelt**. Then
+  it reorders the page.
+- **Cheap and low in calories:** first pick the site's own **Cena par vienību (augoši)**, then a
+  calorie sort. You get the cheapest-per-unit products ordered by calories. Products with equal
+  calories keep their price order.
+- **The box** next to the price shows e.g. **172 kcal** and **17 g olb.** (protein).
+  - `nav datu` means Barbora has no nutrition table for that product.
+  - `?` means its page couldn't be loaded; it is tried again on the next sort.
+- **Back to the site's order:** pick any of the site's own sort options.
 
 ## Good to know
 
-- Many fresh, unpacked products (meat, fruit, vegetables) have no nutrition data on Barbora, so
-  they show `nav datu`. Packaged food nearly always has it.
-- The first calorie sort of a big category has to load every product page once, so it can take a
-  while (the script asks first when that is more than 300 pages). After that, values are
-  remembered in your browser for 30 days, so it gets much faster.
-- If Barbora starts limiting requests, the script slows down, then stops and sorts with what it has,
-  and says so.
+- Loading is deliberately slow: 2 products at a time, about 0.3 s apart. That is about 15 seconds
+  for a page of 52 products the script hasn't seen. Values are remembered in your browser for 30
+  days, so sorting again, or revisiting a page, is instant.
+- If Barbora starts limiting requests, the script stops loading for 5 minutes, sorts with what it
+  already has, and says so.
+- Many fresh, unpacked products (meat, fruit, vegetables) have no nutrition data on Barbora, so they
+  show `nav datu`. Packaged food nearly always has it.
 - Labels follow the site language: Latvian, English or Russian.
 
 ## Development
