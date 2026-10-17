@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer-core');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -12,35 +13,51 @@ const LANG_COOKIES = {
 };
 const UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0';
 
-// Barbora (behind Cloudflare) answers 429 after bursts from one address, so product pages are
-// fetched live once, spaced out, and replayed from disk afterwards. Category pages stay live.
+// Barbora sits behind Cloudflare, which throttles an address that loads many pages (HTTP 429 and
+// its "Just a moment..." page). So the tests record barbora.lv pages, assets and product pages once
+// (fetched from Node, spaced out) and replay them afterwards. The site's own /api/ calls stay live
+// and analytics beacons are answered locally. Delete test/browser/.cache to record afresh.
 const CACHE_DIR = path.join(__dirname, '.cache');
-const LIVE_SPACING_MS = 400;
-let liveQueue = Promise.resolve();
-let lastLiveFetch = 0;
+// Pages on barbora.lv are spaced out; images on cdn.barbora.lv are not, so a recording run never
+// keeps a product page waiting behind dozens of images (the script would time out and retry).
+const LIVE_QUEUES = { 'barbora.lv': { spacingMs: 400 }, 'cdn.barbora.lv': { spacingMs: 0 } };
+for (const queue of Object.values(LIVE_QUEUES)) Object.assign(queue, { tail: Promise.resolve(), last: 0 });
 
-function productPage(url, lang) {
-  const file = path.join(CACHE_DIR, `${lang || 'lv'}${new URL(url).pathname.replace(/\//g, '_')}.html`);
-  if (fs.existsSync(file)) return Promise.resolve({ status: 200, body: fs.readFileSync(file, 'utf8') });
+function routeFor(url) {
+  const { hostname, pathname } = new URL(url);
+  if (hostname === 'cdn.barbora.lv') return 'replay';
+  if (hostname !== 'barbora.lv') return 'live';
+  if (/^\/(cdn-cgi|analytics)\//.test(pathname)) return 'beacon';
+  return pathname.startsWith('/api/') ? 'live' : 'replay';
+}
+
+function recorded(url, lang) {
+  const file = path.join(CACHE_DIR, `${crypto.createHash('sha1').update(`${lang || 'lv'} ${url}`).digest('hex')}.json`);
+  if (fs.existsSync(file)) {
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Promise.resolve({ status: saved.status, contentType: saved.contentType, body: Buffer.from(saved.body, 'base64') });
+  }
+  const queue = LIVE_QUEUES[new URL(url).hostname];
   const live = async () => {
-    const wait = lastLiveFetch + LIVE_SPACING_MS - Date.now();
+    const wait = queue.last + queue.spacingMs - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-    lastLiveFetch = Date.now();
+    queue.last = Date.now();
     try {
       const cookie = lang ? LANG_COOKIES[lang].map((c) => `${c.name}=${c.value}`).join('; ') : '';
       const response = await fetch(url, { headers: { 'User-Agent': UA, ...(cookie ? { Cookie: cookie } : {}) } });
-      const body = await response.text();
+      const body = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers.get('content-type') || 'application/octet-stream';
       if (response.status === 200) {
         fs.mkdirSync(CACHE_DIR, { recursive: true });
-        fs.writeFileSync(file, body);
+        fs.writeFileSync(file, JSON.stringify({ url, status: 200, contentType, body: body.toString('base64') }));
       }
-      return { status: response.status, body };
+      return { status: response.status, contentType, body };
     } catch {
-      return { status: 502, body: '' };
+      return { status: 502, contentType: 'text/plain', body: Buffer.alloc(0) };
     }
   };
-  liveQueue = liveQueue.then(live);
-  return liveQueue;
+  queue.tail = queue.tail.then(live);
+  return queue.tail;
 }
 
 async function launchBrowser() {
@@ -64,10 +81,11 @@ async function openCategory(browser, urlPath, { lang, before, intercept } = {}) 
     const action = intercept ? intercept(req) : undefined;
     if (action === 'abort') return req.abort().catch(ignoreGone);
     if (action && action.status) return req.respond({ status: action.status, contentType: 'text/plain', body: '' }).catch(ignoreGone);
-    const url = new URL(req.url());
-    if (url.hostname === 'barbora.lv' && url.pathname.startsWith('/produkti/') && req.method() === 'GET') {
-      return productPage(req.url(), lang)
-        .then(({ status, body }) => req.respond({ status, contentType: 'text/html; charset=utf-8', body }))
+    const route = routeFor(req.url());
+    if (route === 'beacon') return req.respond({ status: 204, body: '' }).catch(ignoreGone);
+    if (route === 'replay' && req.method() === 'GET') {
+      return recorded(req.url().split('#')[0], lang)
+        .then(({ status, contentType, body }) => req.respond({ status, contentType, body }))
         .catch(ignoreGone);
     }
     return req.continue().catch(ignoreGone);
