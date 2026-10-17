@@ -112,12 +112,79 @@
     return nutritionFromTable(html);
   }
 
+  // ---- Core: URLs and sorting ----
+
+  function parseMarker(hash) {
+    const match = /^#kcal-(asc|desc)$/.exec(hash || '');
+    return match ? match[1] : null;
+  }
+
+  // The current filters, without the site's own sort order and page number.
+  function filterParams(search) {
+    const params = new URLSearchParams(search);
+    params.delete('order');
+    params.delete('page');
+    return params;
+  }
+
+  const toQuery = (params) => {
+    const query = params.toString();
+    return query ? `?${query}` : '';
+  };
+
+  function baseQuery(search) {
+    return toQuery(filterParams(search));
+  }
+
+  function listingUrl(loc, page) {
+    const params = filterParams(loc.search);
+    if (page >= 2) params.set('page', String(page));
+    return loc.pathname + toQuery(params);
+  }
+
+  function listKey(loc) {
+    const params = filterParams(loc.search);
+    params.sort();
+    return loc.pathname + toQuery(params);
+  }
+
+  function sortedViewUrl(loc, dir) {
+    return `${loc.pathname}${baseQuery(loc.search)}#kcal-${dir}`;
+  }
+
+  function productUrl(product) {
+    return `/produkti/${product.Url}`;
+  }
+
+  // Products with a kcal value first, in `dir` order; everything else after, in site order.
+  function sortProducts(products, states, dir) {
+    const sign = dir === 'desc' ? -1 : 1;
+    const kcalOf = (product) => {
+      const state = states.get(product.id);
+      return state && state.status === 'ok' ? state.kcal : null;
+    };
+    const known = products.filter((p) => kcalOf(p) !== null);
+    const unknown = products.filter((p) => kcalOf(p) === null);
+    return [...known.sort((a, b) => sign * (kcalOf(a) - kcalOf(b))), ...unknown];
+  }
+
   // ---- Browser ----
 
   function start() {}
 
   if (typeof window === 'undefined') {
-    module.exports = { CONFIG, extractAssignedJson, readNutrition };
+    module.exports = {
+      CONFIG,
+      extractAssignedJson,
+      readNutrition,
+      parseMarker,
+      baseQuery,
+      listingUrl,
+      listKey,
+      sortedViewUrl,
+      productUrl,
+      sortProducts,
+    };
   } else {
     start();
   }
