@@ -61,6 +61,34 @@ test('a re-rendered card keeps its sort position', { timeout: 180_000 }, async (
   } finally { await close(); }
 });
 
+test('a recommendations row in the grid gets no badges and follows the sorted cards', { timeout: 180_000 }, async () => {
+  const { browser, close } = await h.launchBrowser();
+  try {
+    const page = await h.openCategory(browser, VISTAS);
+    await h.waitForBadges(page);
+    // What the site inserts for logged-in users after "Pievienot": a full-width row holding a
+    // carousel of other products, whose items also carry data-cnstrc-item-id.
+    await page.evaluate(() => {
+      const grid = document.querySelector('li[data-cnstrc-item-id]').parentElement;
+      const row = document.createElement('li');
+      row.id = 'bcs-test-carousel';
+      row.className = 'tw-col-span-2 tw-w-full tw-list-none md:tw-col-span-4';
+      row.innerHTML = '<ul><li class="b-carousel--item" data-cnstrc-item="recommendation" data-cnstrc-item-id="000000000099999999"><div itemprop="offers"></div></li></ul>';
+      grid.insertBefore(row, grid.children[4] || null);
+    });
+    await page.select('select.b-orderby', 'bcs-kcal-asc');
+    await page.waitForFunction(() => location.hash === '#kcal-asc');
+    await new Promise((r) => setTimeout(r, 500));
+    const seen = await page.evaluate(() => {
+      const row = document.getElementById('bcs-test-carousel');
+      const cardOrders = [...row.parentElement.children].filter((li) => li !== row).map((li) => Number(getComputedStyle(li).order));
+      return { badges: row.querySelectorAll('.bcs-badge').length, rowOrder: Number(getComputedStyle(row).order), lastCardOrder: Math.max(...cardOrders) };
+    });
+    assert.equal(seen.badges, 0, 'carousel products are not cards');
+    assert.ok(seen.rowOrder > seen.lastCardOrder, `row order ${seen.rowOrder} should follow every card (${seen.lastCardOrder})`);
+  } finally { await close(); }
+});
+
 test('picking a native option returns to the site sorting', { timeout: 180_000 }, async () => {
   const { browser, close } = await h.launchBrowser();
   try {

@@ -43,7 +43,7 @@ and reading the minified bundle `/build/main.concat.js`.
 | Fact | Detail |
 |---|---|
 | Product list on category pages | Inline script `window.b_productList = [...]`, at most 52 items per page. Paging via `?page=N`; a page past the end returns `[]`. Fields used: `id`, `Url`. |
-| Card rendering | React reads `window.b_productList` **at render time** and renders it into `#category-page-results-placeholder` > `ul` (CSS grid) > one `li[data-cnstrc-item-id="<id>"]` per product. All `li` are direct grid children. |
+| Card rendering | React reads `window.b_productList` **at render time** and renders it into `#category-page-results-placeholder` > `ul` (CSS grid) > one `li[data-cnstrc-item-id="<id>"]` per product. All cards are direct grid children. For logged-in users, "Pievienot" also inserts a full-width recommendations row (`li.tw-col-span-2`) after the clicked product's row; its carousel items carry `data-cnstrc-item-id` too but are not cards. |
 | Price block in a card | `[itemprop="offers"]` (contains `[data-testid="priceTextContainer"]`). |
 | Native sort | `select.b-orderby`; its own `change` listener navigates to the current query plus `order=<value>`, minus `page`. Values: `name`, `nameDesc`, `priceAsc`, `priceDesc`, `discount`, `discountDesc`, `aciuOffers`, `aciuOffersDesc`, `comparativePriceAsc`, `comparativePriceDesc`. |
 | Pagination | Server-rendered `ul.pagination`; links carry `page=` only when there is more than one page. |

@@ -571,6 +571,9 @@
   // ---- Browser ----
 
   const CARD_SELECTOR = 'li[data-cnstrc-item-id]';
+  // Cards are the grid's own <li>s. For logged-in users the site nests a full-width recommendations
+  // row in the grid whose carousel items also carry data-cnstrc-item-id; those are not cards.
+  const isCard = (li) => !li.parentElement || !li.parentElement.closest('li');
 
   const STYLE_CSS = `
 .bcs-badge { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; line-height: 16px; font-weight: 600; background: #e8f5e9; color: #1b5e20; white-space: normal; }
@@ -625,7 +628,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     cards() {
-      return [...this.container.querySelectorAll(CARD_SELECTOR)];
+      return [...this.container.querySelectorAll(CARD_SELECTOR)].filter(isCard);
     }
 
     ids() {
@@ -633,7 +636,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     update(id) {
-      const li = this.container.querySelector(`li[data-cnstrc-item-id="${CSS.escape(id)}"]`);
+      const li = [...this.container.querySelectorAll(`li[data-cnstrc-item-id="${CSS.escape(id)}"]`)].find(isCard);
       if (li) this.render(li);
     }
 
@@ -643,7 +646,24 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     renderAll() {
-      for (const li of this.cards()) this.render(li);
+      const cards = this.cards();
+      for (const li of cards) this.render(li);
+      // Anything else in the grid (the recommendations row) goes after the sorted cards.
+      const isOwnCard = new Set(cards);
+      const grid = cards.length ? cards[0].parentElement : null;
+      if (grid) for (const child of grid.children) if (!isOwnCard.has(child)) this.applyOrder(child, this.ranks && this.ranks.size + 1);
+    }
+
+    // Sets the CSS order (or removes the one this decorator set when rank is null).
+    applyOrder(el, rank) {
+      if (this.ranks) {
+        const order = String(rank);
+        if (el.style.order !== order) el.style.order = order;
+        this.ordered.add(el);
+      } else if (this.ordered.has(el)) {
+        el.style.removeProperty('order');
+        this.ordered.delete(el);
+      }
     }
 
     render(li) {
@@ -660,14 +680,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       if (badge.className !== className) badge.className = className;
       if (badge.textContent !== text) badge.textContent = text;
       if (badge.title !== title) badge.title = title;
-      if (this.ranks) {
-        const rank = String(this.ranks.has(id) ? this.ranks.get(id) : this.ranks.size);
-        if (li.style.order !== rank) li.style.order = rank;
-        this.ordered.add(li);
-      } else if (this.ordered.has(li)) {
-        li.style.removeProperty('order');
-        this.ordered.delete(li);
-      }
+      this.applyOrder(li, this.ranks && (this.ranks.has(id) ? this.ranks.get(id) : this.ranks.size));
     }
   }
 

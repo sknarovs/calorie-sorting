@@ -119,9 +119,10 @@ async function openCategory(browser, urlPath, { lang, before, intercept, product
   return page;
 }
 
+// Cards are the grid's own <li>s, not products nested in a recommendations row.
 async function waitForBadges(page, timeoutMs = 90_000) {
   await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll('li[data-cnstrc-item-id]')];
+    const cards = [...document.querySelectorAll('li[data-cnstrc-item-id]')].filter((li) => !li.parentElement.closest('li'));
     return cards.length > 0 && cards.every((li) => {
       const badge = li.querySelector('.bcs-badge');
       return badge && !badge.classList.contains('bcs-badge--loading');
@@ -131,7 +132,7 @@ async function waitForBadges(page, timeoutMs = 90_000) {
 
 // Cards in visual order: by CSS `order`, then by position in the DOM.
 async function readCards(page) {
-  const cards = await page.$$eval('li[data-cnstrc-item-id]', (lis) => lis.map((li, domIndex) => {
+  const cards = await page.$$eval('li[data-cnstrc-item-id]', (lis) => lis.filter((li) => !li.parentElement.closest('li')).map((li, domIndex) => {
     const badge = li.querySelector('.bcs-badge');
     const kind = badge ? ((/bcs-badge--(\w+)/.exec(badge.className) || [])[1] || null) : null;
     return {
