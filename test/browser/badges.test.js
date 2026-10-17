@@ -95,13 +95,16 @@ test('sorting by price per unit loads the values without reordering', { timeout:
   } finally { await close(); }
 });
 
-test('other site sorts still load nothing', { timeout: 180_000 }, async () => {
+test('sorting by price loads the values too, keeping the site order', { timeout: 180_000 }, async () => {
   const { browser, close } = await h.launchBrowser();
   try {
     const page = await h.openCategory(browser, `${VISTAS}?order=priceAsc`);
-    await new Promise((r) => setTimeout(r, 3000));
-    assert.equal((await h.productFetches(page)).length, 0);
-    assert.equal(await page.$$eval('.bcs-box', (boxes) => boxes.length), 0);
+    const siteOrder = await page.$$eval('li[data-cnstrc-item-id]', (lis) => lis
+      .filter((li) => !li.parentElement.closest('li')).map((li) => li.getAttribute('data-cnstrc-item-id')));
+    await h.waitForBoxes(page);
+    const cards = await h.readCards(page);
+    assert.deepEqual(cards.map((c) => c.id), siteOrder, 'the site order stays');
+    assert.ok(cards.every((c) => ['ok', 'none', 'failed'].includes(c.kind)));
   } finally { await close(); }
 });
 

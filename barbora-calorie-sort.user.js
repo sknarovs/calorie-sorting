@@ -128,9 +128,10 @@
     return match ? match[1] : null;
   }
 
-  // Sorting by price per unit ("Cena par vienību") shows the kcal boxes without being asked.
+  // Any site sort the user picks shows the kcal boxes without being asked; the unsorted page loads nothing.
   function autoLoads(search) {
-    return /^comparativePrice(Asc|Desc)$/.test(new URLSearchParams(search).get('order') || '');
+    const order = new URLSearchParams(search).get('order');
+    return Boolean(order) && order !== 'default';
   }
 
   function productUrl(product) {
@@ -683,7 +684,7 @@
       else if (autoLoads(this.win.location.search)) this.showValues();
     }
 
-    // On a price-per-unit page the boxes appear by themselves; the site's order stays.
+    // On a page the user sorted with the site's own options the boxes appear by themselves; the order stays.
     async showValues() {
       const { cancelled, rateLimited } = await this.loadMissing();
       if (!cancelled) this.reportProblems(rateLimited);

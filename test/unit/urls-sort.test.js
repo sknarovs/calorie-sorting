@@ -10,12 +10,14 @@ test('parseMarker', () => {
   assert.equal(parseMarker('#reviews'), null);
 });
 
-test('autoLoads is true only for the price-per-unit sorts', () => {
+test('autoLoads is true for any site sort, false for the unsorted page', () => {
   assert.equal(autoLoads('?order=comparativePriceAsc'), true);
   assert.equal(autoLoads('?brand=135&order=comparativePriceDesc&page=2'), true);
-  assert.equal(autoLoads('?order=priceAsc'), false);
-  assert.equal(autoLoads('?order=name'), false);
+  assert.equal(autoLoads('?order=priceAsc'), true);
+  assert.equal(autoLoads('?order=name'), true);
   assert.equal(autoLoads(''), false);
+  assert.equal(autoLoads('?page=2&brand=135'), false);
+  assert.equal(autoLoads('?order=default'), false);
 });
 
 test('productUrl', () => {

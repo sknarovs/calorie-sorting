@@ -20,6 +20,9 @@ the git history.
 values for that page by itself, without reordering. Next to a discounted price, where two joined
 price boxes leave only about 63 px, the kcal box uses a compact size so it stays on the same line.
 
+**Revision 3.** Any of the site's own sort options (any `order` parameter other than `default`) now
+triggers the loading, not only price per unit. The unsorted page still loads nothing.
+
 ## Goal
 
 The user orders groceries on barbora.lv and wants to eat healthier and possibly lose weight.
@@ -34,8 +37,8 @@ A Tampermonkey userscript adds:
 
 ## Success criteria
 
-1. Browsing category pages makes no extra requests to Barbora. The exception is a page sorted by
-   price per unit, where the values for that page load automatically.
+1. Browsing category pages makes no extra requests to Barbora. The exception is a page the user
+   sorted with one of the site's own options, where the values for that page load automatically.
 2. Picking a calorie option loads the missing values for the products on screen, at a gentle pace,
    then reorders them. Products with equal values keep the order the site showed them in.
 3. Each known product shows a price-like box with kcal and protein. Saved values appear
@@ -73,9 +76,10 @@ Verified 2026-10-17 against the live site (client version v1.59.1).
 - No product pages are requested.
 - Cards whose values were saved by an earlier sort show their box straight away. Other cards show
   nothing.
-- **Price-per-unit pages** (`order=comparativePriceAsc` or `comparativePriceDesc`): the values for
-  the products on the page load automatically, with the same pace, progress line and Cancel as a
-  calorie sort. The site's order stays, and a later calorie sort reuses the loaded values.
+- **Pages sorted with a site option** (any `order` parameter other than `default`: price, price per
+  unit, alphabetical, discounts…): the values for the products on the page load automatically, with
+  the same pace, progress line and Cancel as a calorie sort. The site's order stays, and a later
+  calorie sort reuses the loaded values.
 
 ### Sorting
 - Two options are appended to `select.b-orderby`: calories low to high (`bcs-kcal-asc`) and high to
@@ -157,7 +161,7 @@ Pure, unit-tested in Node:
 |---|---|
 | `extractAssignedJson(html, name)` | Parse the JSON value after `window.<name> =` (string- and escape-aware bracket matching), or `null`. |
 | `readNutrition(html)` | Product page → `{status: 'ok', kcal, protein}`, `{status: 'none'}` or `{status: 'unreadable'}`. Rules below. Never throws. |
-| `parseMarker(hash)`, `autoLoads(search)`, `productUrl(product)` | `#kcal-asc` → `asc`; true for the price-per-unit sorts; `/produkti/<Url>`. |
+| `parseMarker(hash)`, `autoLoads(search)`, `productUrl(product)` | `#kcal-asc` → `asc`; true when the page has a site sort (`order` other than `default`); `/produkti/<Url>`. |
 | `sortProducts(products, states, dir)` | Stable sort by kcal, entries without a number last in original order. |
 | `pickLabels`, `fill`, `formatBox`, `composeNotice` | Labels for the site locale; box lines/kind/title per state; status text for failures and rate limiting. |
 | `isFresh`, `NutritionCache(storage)` | Cache TTLs; load, lookup, batched put, merge-on-write, pruning, quota handling. |
@@ -218,8 +222,8 @@ Browser-only, covered by the browser tests:
   - fetch outcomes
 - **Browser (`npm run test:browser`):** puppeteer-core drives the installed Firefox against a
   recorded copy of barbora.lv; only the site's own `/api/` calls stay live. Checks:
-  - browsing makes no product requests, and other site sorts load nothing
-  - a price-per-unit page shows the boxes without reordering
+  - browsing the unsorted page makes no product requests
+  - a page sorted by price per unit, or by price, shows the boxes without reordering
   - next to a discounted price the box stays on the price line
   - sorting loads values and puts each box beside the price at the same height
   - saved values show with zero requests
