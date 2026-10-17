@@ -188,6 +188,9 @@
   const LABELS = {
     lv: {
       locale: 'lv',
+      kcal: '{k} kcal',
+      protein: '{p} g olb.',
+      boxTitle: 'uz 100 g/ml · olb. — olbaltumvielas',
       sortAsc: 'Kalorijas (augoši)',
       sortDesc: 'Kalorijas (dilstoši)',
       badge: '{k} kcal · {p} g olbaltumvielu',
@@ -207,6 +210,9 @@
     },
     en: {
       locale: 'en',
+      kcal: '{k} kcal',
+      protein: '{p} g protein',
+      boxTitle: 'per 100 g/ml',
       sortAsc: 'Calories from lowest',
       sortDesc: 'Calories from highest',
       badge: '{k} kcal · {p} g protein',
@@ -226,6 +232,9 @@
     },
     ru: {
       locale: 'ru',
+      kcal: '{k} ккал',
+      protein: '{p} г белка',
+      boxTitle: 'на 100 г/мл',
       sortAsc: 'Калорийности от самой низкой',
       sortDesc: 'Калорийности от самой высокой',
       badge: '{k} ккал · {p} г белка',
@@ -267,6 +276,30 @@
         return { kind: 'failed', text: '?', title: labels.failedTitle };
       default:
         return { kind: 'loading', text: fill(labels.badgeKcalOnly, { k: '…' }), title: '' };
+    }
+  }
+
+  const numberFormats = new Map();
+  function formatNumber(locale, value, maxDigits) {
+    const key = `${locale}:${maxDigits}`;
+    if (!numberFormats.has(key)) numberFormats.set(key, new Intl.NumberFormat(locale, { maximumFractionDigits: maxDigits }));
+    return numberFormats.get(key).format(value);
+  }
+
+  // The kcal box: a bold first line (kcal) and a small second line (protein), like the price box.
+  function formatBox(labels, state) {
+    switch (state.status) {
+      case 'ok': {
+        const lines = [fill(labels.kcal, { k: formatNumber(labels.locale, state.kcal, 0) })];
+        if (state.protein !== null) lines.push(fill(labels.protein, { p: formatNumber(labels.locale, state.protein, 1) }));
+        return { kind: 'ok', lines, title: labels.boxTitle };
+      }
+      case 'none':
+        return { kind: 'none', lines: [labels.noData], title: '' };
+      case 'failed':
+        return { kind: 'failed', lines: ['?'], title: labels.failedTitle };
+      default:
+        return { kind: 'loading', lines: [fill(labels.kcal, { k: '…' })], title: '' };
     }
   }
 
@@ -414,11 +447,12 @@
     return result.status === 'unreadable' ? { status: 'failed' } : result;
   }
 
-  // Runs `worker` over `items` with a concurrency limit, cancel support and rate-limit backoff.
+  // Runs `worker` over `items` with a concurrency limit, a minimum gap between starts, cancel
+  // support and rate-limit backoff.
   function runPool(items, worker, opts) {
     const {
-      concurrency, signal, onResult, isRateLimited = () => false, sleep = defaultSleep,
-      backoffMs = CONFIG.backoffMs, maxRateLimited = CONFIG.maxRateLimited,
+      concurrency, signal, onResult, isRateLimited = () => false, sleep = defaultSleep, now = Date.now,
+      minSpacingMs = 0, backoffMs = CONFIG.backoffMs, maxRateLimited = CONFIG.maxRateLimited,
     } = opts;
     return new Promise((resolve, reject) => {
       const queue = [...items];
@@ -456,18 +490,35 @@
         pump();
         finishIfDone();
       };
-      const pump = () => {
+      let pumping = false;
+      let lastStart = -Infinity;
+      const pump = async () => {
+        if (pumping) return;
+        pumping = true;
         while (!stopped && !aborted() && inFlight < limit && queue.length > 0) {
+          const wait = lastStart + minSpacingMs - now();
+          if (wait > 0) {
+            await sleep(wait);
+            continue; // conditions may have changed while waiting
+          }
           const item = queue.shift();
           inFlight += 1;
-          Promise.resolve()
-            .then(() => worker(item, signal))
+          lastStart = now();
+          let running;
+          try {
+            running = Promise.resolve(worker(item, signal));
+          } catch (error) {
+            running = Promise.reject(error);
+          }
+          running
             .then((result) => settle(item, result))
             .catch((error) => {
               stopped = true;
               reject(error);
             });
         }
+        pumping = false;
+        finishIfDone();
       };
       pump();
       finishIfDone();
@@ -1080,6 +1131,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       pickLabels,
       fill,
       formatBadge,
+      formatBox,
       composeNotice,
       isFresh,
       NutritionCache,

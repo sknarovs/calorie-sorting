@@ -20,6 +20,18 @@ test('runPool runs every item, at most `concurrency` at once, reporting progress
   assert.equal(rateLimited, false);
 });
 
+test('runPool keeps the starts of its workers at least minSpacingMs apart', async () => {
+  let clock = 0;
+  const starts = [];
+  await runPool([1, 2, 3, 4, 5], async (n) => { starts.push(clock); await tick(); return n; }, {
+    concurrency: 2, minSpacingMs: 300, now: () => clock, sleep: async (ms) => { clock += ms; },
+  });
+  assert.equal(starts.length, 5);
+  for (let i = 1; i < starts.length; i++) {
+    assert.ok(starts[i] - starts[i - 1] >= 300, `start ${i} came ${starts[i] - starts[i - 1]} ms after the previous one`);
+  }
+});
+
 test('runPool starts nothing new once the signal aborts', async () => {
   const ac = new AbortController(); const started = [];
   const { results, cancelled } = await runPool([1, 2, 3, 4, 5], async (n) => {
