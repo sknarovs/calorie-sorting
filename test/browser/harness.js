@@ -156,6 +156,11 @@ function assertCalorieOrder(cards, dir) {
   }
 }
 
+// page.url() can lag behind navigations the page script starts, so ask the page itself.
+async function currentUrl(page) {
+  return new URL(await page.evaluate(() => location.href));
+}
+
 async function productFetches(page) {
   return page.evaluate(() => performance.getEntriesByType('resource')
     .filter((e) => e.initiatorType === 'fetch' && new URL(e.name).pathname.startsWith('/produkti/'))
@@ -177,5 +182,5 @@ function shot(name) {
 }
 
 module.exports = {
-  SITE, launchBrowser, openCategory, waitForBadges, readCards, parseKcal, assertCalorieOrder, productFetches, waitUntil, shot,
+  SITE, launchBrowser, openCategory, waitForBadges, readCards, parseKcal, assertCalorieOrder, currentUrl, productFetches, waitUntil, shot,
 };

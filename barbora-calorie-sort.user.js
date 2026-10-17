@@ -575,6 +575,81 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
   }
 
+  // One line above the product grid for progress, notices and the all-sorted banner.
+  class StatusLine {
+    constructor(container, labels) {
+      this.labels = labels;
+      this.el = container.ownerDocument.createElement('div');
+      this.el.className = 'bcs-status';
+      this.el.setAttribute('role', 'status');
+      this.el.hidden = true;
+      container.before(this.el);
+    }
+
+    show(text, buttonLabel, onClick) {
+      const doc = this.el.ownerDocument;
+      this.el.replaceChildren(doc.createTextNode(text));
+      if (buttonLabel) {
+        const button = doc.createElement('button');
+        button.type = 'button';
+        button.className = 'bcs-status__action';
+        button.textContent = buttonLabel;
+        button.addEventListener('click', onClick);
+        this.el.append(button);
+      }
+      this.el.hidden = false;
+    }
+
+    progress(text, onCancel) {
+      this.show(text, onCancel ? this.labels.cancel : null, onCancel);
+    }
+
+    notice(text, action) {
+      this.show(text, action ? action.label : null, action ? action.onClick : null);
+    }
+
+    clear() {
+      this.el.replaceChildren();
+      this.el.hidden = true;
+    }
+  }
+
+  // The two calorie options in the site's "Kārtot pēc" dropdown.
+  class SortControl {
+    constructor(select, labels, handlers) {
+      Object.assign(this, { select, labels, handlers });
+    }
+
+    install() {
+      if (!this.select.querySelector('option[value^="bcs-kcal-"]')) {
+        const doc = this.select.ownerDocument;
+        for (const [dir, text] of [['asc', this.labels.sortAsc], ['desc', this.labels.sortDesc]]) {
+          const option = doc.createElement('option');
+          option.value = `bcs-kcal-${dir}`;
+          option.textContent = text;
+          this.select.append(option);
+        }
+      }
+      this.previous = this.select.value;
+    }
+
+    show(dir) {
+      this.select.value = dir ? `bcs-kcal-${dir}` : this.previous;
+    }
+
+    // Runs in the capture phase on window, before the site's own listener on the select.
+    handleChange(event) {
+      const match = /^bcs-kcal-(asc|desc)$/.exec(this.select.value);
+      if (match) {
+        event.stopImmediatePropagation();
+        this.handlers.onCalorie(match[1]);
+      } else {
+        this.previous = this.select.value;
+        this.handlers.onLeave();
+      }
+    }
+  }
+
   class CategoryPage {
     constructor({ win, container, select, products, labels, cache, boot }) {
       Object.assign(this, { win, container, select, products, labels, cache, boot });
@@ -588,9 +663,55 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     init() {
+      const { labels, boot } = this;
       injectStyle(this.win.document);
+      this.status = new StatusLine(this.container, labels);
+      if (this.select) {
+        this.sortControl = new SortControl(this.select, labels, {
+          onCalorie: (dir) => this.sort(dir),
+          onLeave: () => this.leaveCalorieMode(),
+        });
+        this.sortControl.install();
+        if (boot.marker) this.sortControl.show(boot.marker);
+      }
       this.decorator.start();
-      this.loading = this.fetchMissing(this.products.filter((p) => !this.states.has(p.id)));
+      const missing = this.products.filter((p) => !this.states.has(p.id));
+      // Resolves only after the notice below, so it never overwrites a later sort flow's notice.
+      this.loading = this.fetchMissing(missing, {
+        onProgress: (done, total) => this.status.progress(fill(labels.loadingNutrition, { done, total })),
+      }).then((result) => {
+        const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
+        const text = composeNotice(labels, { failed, rateLimited: result.rateLimited });
+        if (text) this.status.notice(text);
+        else this.status.clear();
+        return result;
+      });
+      if (boot.marker) this.sort(boot.marker);
+    }
+
+    isMultiPage() {
+      const { document, location } = this.win;
+      return Boolean(document.querySelector('.pagination a[href*="page="]')) || Number(new URLSearchParams(location.search).get('page')) > 1;
+    }
+
+    sort(dir) {
+      return this.onePageSort(dir);
+    }
+
+    // Reorders the cards already on screen with CSS `order`; React's DOM stays untouched.
+    async onePageSort(dir) {
+      await this.loading;
+      const ranks = new Map(sortProducts(this.products, this.states, dir).map((product, index) => [product.id, index]));
+      this.decorator.setOrder(ranks);
+      const { pathname, search } = this.win.location;
+      this.win.history.replaceState(null, '', `${pathname}${search}#kcal-${dir}`);
+      if (this.sortControl) this.sortControl.show(dir);
+    }
+
+    leaveCalorieMode() {
+      const { location, history } = this.win;
+      if (parseMarker(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+      this.decorator.setOrder(null);
     }
 
     stateOf(id) {
@@ -650,8 +771,15 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
   }
 
   function start() {
-    const boot = {};
-    const go = () => createCategoryPage(window, boot);
+    const boot = { marker: parseMarker(location.hash) };
+    let page = null;
+    window.addEventListener('change', (event) => {
+      const target = event.target;
+      if (page && page.sortControl && target && target.matches && target.matches('select.b-orderby')) {
+        page.sortControl.handleChange(event);
+      }
+    }, true);
+    const go = () => { page = createCategoryPage(window, boot); };
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true });
     else go();
   }
