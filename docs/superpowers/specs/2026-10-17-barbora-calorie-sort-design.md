@@ -47,7 +47,7 @@ and reading the minified bundle `/build/main.concat.js`.
 | Price block in a card | `[itemprop="offers"]` (contains `[data-testid="priceTextContainer"]`). |
 | Native sort | `select.b-orderby`; its own `change` listener navigates to the current query plus `order=<value>`, minus `page`. Values: `name`, `nameDesc`, `priceAsc`, `priceDesc`, `discount`, `discountDesc`, `aciuOffers`, `aciuOffersDesc`, `comparativePriceAsc`, `comparativePriceDesc`. |
 | Pagination | Server-rendered `ul.pagination`; links carry `page=` only when there is more than one page. |
-| Product page | `/produkti/<Url>`; inline `window.product = {...}` with `nutrients: [{Name, Amounts: [{Amount, UnitName}], PercentOfGda}]`, values per 100 g/ml. Empty array when the product has no label. The visible table repeats the energy row as `717.00 kJ / 172.00 Kcal`. |
+| Product page | `/produkti/<Url>`; inline `window.product = {...}` with `nutrients: [{Name, Amounts: [{Amount, UnitName}], PercentOfGda}]`, values per 100 g/ml. The `nutrients` key is absent when the product has no label. The visible table repeats the energy row as `717.00 kJ / 172.00 Kcal`; on the Russian site it reads `717.00 кДж / 172.00 ккал`. |
 | Language | Chosen by cookie (`lng`, `lang`); same URLs. `window.b_data.selectedLanguageData.locale` is `lv`, `en` or `ru`. Pages fetched by the script come back in the current language. `UnitName` is `Kcal` in every language; the protein row is named `Olbaltumvielas` / `Proteins` / `Белки`. |
 | Security headers | CSP has only `frame-ancestors` and `frame-src`; nothing restricts scripts. |
 | URL hash | Not read by the site's code, so it is free for a marker. |
@@ -194,8 +194,8 @@ Browser-only parts, covered by the browser test:
 2. Protein is the `Amounts[0].Amount` of the nutrient whose trimmed `Name` matches
    `Olbaltumvielas`, `Proteins`, `Protein`, `Белки` or `Белок`, case-insensitively.
 3. If `window.product` is missing or can't be parsed, fall back to the visible table.
-   Read `<td>name</td><td …>value</td>` pairs, take kcal from `/([\d.,]+)\s*kcal/i`
-   in the energy value, and take protein by the same names.
+   Read `<td>name</td><td …>value</td>` pairs, take kcal from
+   `/([\d.,]+)\s*(?:kcal|ккал)/i` in the energy value, and take protein by the same names.
 4. Sanity rules:
    - kcal must be a finite number in 0–950, otherwise the result is `none`.
    - Protein outside 0–100 is dropped, which leaves a kcal-only result.
