@@ -346,6 +346,133 @@
     return now - record.savedAt <= CONFIG.listTtlMs ? record : null;
   }
 
+  // ---- Core: fetching ----
+
+  const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // One request, classified: ok | limited (429/503) | retry (5xx, network, timeout) | fail | aborted.
+  async function getPage(url, { fetch, signal, timeoutMs = CONFIG.timeoutMs }) {
+    if (signal && signal.aborted) return { kind: 'aborted' };
+    const timeout = AbortSignal.timeout(timeoutMs);
+    try {
+      const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, credentials: 'same-origin' });
+      if (response.ok) return { kind: 'ok', text: await response.text() };
+      if (response.status === 429 || response.status === 503) return { kind: 'limited' };
+      return { kind: response.status >= 500 ? 'retry' : 'fail' };
+    } catch {
+      return { kind: signal && signal.aborted ? 'aborted' : 'retry' };
+    }
+  }
+
+  async function getPageWithRetry(url, deps) {
+    const first = await getPage(url, deps);
+    if (first.kind !== 'retry') return first;
+    await (deps.sleep || defaultSleep)(deps.retryDelayMs ?? CONFIG.retryDelayMs);
+    const second = await getPage(url, deps);
+    return second.kind === 'retry' ? { kind: 'fail' } : second;
+  }
+
+  async function fetchNutrition(url, deps) {
+    const page = await getPageWithRetry(url, deps);
+    if (page.kind === 'limited') return { status: 'rateLimited' };
+    if (page.kind !== 'ok') return { status: 'failed' };
+    const result = readNutrition(page.text);
+    return result.status === 'unreadable' ? { status: 'failed' } : result;
+  }
+
+  // Runs `worker` over `items` with a concurrency limit, cancel support and rate-limit backoff.
+  function runPool(items, worker, opts) {
+    const {
+      concurrency, signal, onResult, isRateLimited = () => false, sleep = defaultSleep,
+      backoffMs = CONFIG.backoffMs, maxRateLimited = CONFIG.maxRateLimited,
+    } = opts;
+    return new Promise((resolve, reject) => {
+      const queue = [...items];
+      const results = new Map();
+      const aborted = () => Boolean(signal && signal.aborted);
+      let limit = concurrency;
+      let inFlight = 0;
+      let streak = 0;
+      let stopped = false;
+      let rateLimited = false;
+
+      const finishIfDone = () => {
+        if (inFlight === 0 && (stopped || aborted() || queue.length === 0)) {
+          resolve({ results, cancelled: aborted(), rateLimited });
+        }
+      };
+      const settle = async (item, result) => {
+        if (isRateLimited(result)) {
+          streak += 1;
+          if (streak >= maxRateLimited) {
+            stopped = true;
+            rateLimited = true;
+          } else {
+            // The item stays "in flight" during the pause, so nothing new starts.
+            limit = 1;
+            await sleep(backoffMs);
+            queue.unshift(item);
+          }
+        } else {
+          streak = 0;
+          results.set(item, result);
+          if (onResult) onResult(item, result, results.size, items.length);
+        }
+        inFlight -= 1;
+        pump();
+        finishIfDone();
+      };
+      const pump = () => {
+        while (!stopped && !aborted() && inFlight < limit && queue.length > 0) {
+          const item = queue.shift();
+          inFlight += 1;
+          Promise.resolve()
+            .then(() => worker(item, signal))
+            .then((result) => settle(item, result))
+            .catch((error) => {
+              stopped = true;
+              reject(error);
+            });
+        }
+      };
+      pump();
+      finishIfDone();
+    });
+  }
+
+  // All products of the category the user is looking at (current filters, every page), in site order.
+  async function collectCategory(loc, deps) {
+    const { signal, onPage, concurrency = CONFIG.listingConcurrency, maxPages = CONFIG.maxPages } = deps;
+    const abortError = () => new DOMException('Aborted', 'AbortError');
+    const products = [];
+    const seen = new Set();
+    let firstPageSize = null;
+    for (let first = 1; first <= maxPages; first += concurrency) {
+      if (signal && signal.aborted) throw abortError();
+      const numbers = [];
+      for (let n = first; n < first + concurrency && n <= maxPages; n++) numbers.push(n);
+      const pages = await Promise.all(numbers.map((n) => getPageWithRetry(listingUrl(loc, n), deps)));
+      for (let i = 0; i < numbers.length; i++) {
+        const n = numbers[i];
+        if (pages[i].kind === 'aborted') throw abortError();
+        const list = pages[i].kind === 'ok' ? extractAssignedJson(pages[i].text, 'b_productList') : null;
+        if (!Array.isArray(list)) throw new Error(`listing page ${n} failed`);
+        if (firstPageSize === null) firstPageSize = list.length;
+        let added = 0;
+        for (const item of list) {
+          if (item && item.id && !item.isBanner && !seen.has(item.id)) {
+            seen.add(item.id);
+            products.push(item);
+            added += 1;
+          }
+        }
+        if (onPage) onPage(n);
+        if (list.length === 0 || list.length < firstPageSize || added === 0 || n === maxPages) return products;
+      }
+    }
+    return products;
+  }
+
   // ---- Browser ----
 
   function start() {}
@@ -371,6 +498,9 @@
       NutritionCache,
       saveList,
       loadList,
+      runPool,
+      fetchNutrition,
+      collectCategory,
     };
   } else {
     start();
