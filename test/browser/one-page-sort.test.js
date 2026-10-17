@@ -90,6 +90,22 @@ test('the Russian site gets Russian labels', { timeout: 180_000 }, async () => {
   } finally { await close(); }
 });
 
+test('after rate limiting, the next page load does not fetch while the cooldown lasts', { timeout: 180_000 }, async () => {
+  const { browser, close } = await h.launchBrowser();
+  try {
+    const page = await h.openCategory(browser, VISTAS, {
+      intercept: (req) => (new URL(req.url()).pathname.startsWith('/produkti/') ? { status: 429 } : undefined),
+    });
+    const limited = () => document.querySelector('.bcs-status')?.textContent.includes('Barbora ierobežo pieprasījumus');
+    await page.waitForFunction(limited, { timeout: 60_000 });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('li[data-cnstrc-item-id]');
+    await page.waitForFunction(limited, { timeout: 30_000 });
+    await h.waitForBadges(page);
+    assert.equal((await h.productFetches(page)).length, 0, 'no product pages requested during the cooldown');
+  } finally { await close(); }
+});
+
 test('rate limiting shows the notice and marks unloaded products with ?', { timeout: 180_000 }, async () => {
   const { browser, close } = await h.launchBrowser();
   try {

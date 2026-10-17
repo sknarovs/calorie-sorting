@@ -55,6 +55,27 @@ test('a failing listing page falls back to sorting this page', { timeout: 300_00
   } finally { await close(); }
 });
 
+test('a whole-category run that gets rate limited sorts this page instead of reloading', { timeout: 300_000 }, async () => {
+  const { browser, close } = await h.launchBrowser();
+  try {
+    const page1Slugs = new Set(); // filled after page 1 has loaded, so only page-2 products get 429
+    const intercept = (req) => {
+      const { pathname } = new URL(req.url());
+      const slug = pathname.slice('/produkti/'.length);
+      return pathname.startsWith('/produkti/') && page1Slugs.size && !page1Slugs.has(slug) ? { status: 429 } : undefined;
+    };
+    const { page } = await openYogurts(browser, { intercept });
+    for (const slug of await page.evaluate(() => window.b_productList.map((p) => p.Url))) page1Slugs.add(slug);
+    await page.evaluate(() => { window.__bcsNoReload = true; });
+    await page.select('select.b-orderby', 'bcs-kcal-asc');
+    await page.waitForFunction(() => document.querySelector('.bcs-status')?.textContent.includes('Barbora ierobežo pieprasījumus'), { timeout: 120_000 });
+    await new Promise((r) => setTimeout(r, 3000));
+    assert.equal(await page.evaluate(() => window.__bcsNoReload), true, 'no reload into a page Barbora may be blocking');
+    assert.equal(await page.$('html.bcs-all-sorted'), null);
+    h.assertCalorieOrder(await h.readCards(page), 'asc');
+  } finally { await close(); }
+});
+
 test('falls back without a second reload when the swap fails', { timeout: 300_000 }, async () => {
   const { browser, close } = await h.launchBrowser();
   try {

@@ -34,7 +34,8 @@
     confirmAbove: 300,
     fetchesPerSecond: 30,
     verifyTimeoutMs: 10000,
-    keys: { nutrition: 'bcs:nutrition:v1', list: 'bcs:list:v1', reload: 'bcs:reload' },
+    cooldownMs: 5 * 60 * 1000,
+    keys: { nutrition: 'bcs:nutrition:v1', list: 'bcs:list:v1', reload: 'bcs:reload', cooldown: 'bcs:cooldown' },
   };
 
   // ---- Core: page data and nutrition ----
@@ -361,18 +362,36 @@
     return now - record.savedAt <= CONFIG.listTtlMs ? record : null;
   }
 
+  // After Barbora limits requests, every tab stops fetching for a while instead of adding to the block.
+  function startCooldown(storage, now) {
+    try {
+      storage.setItem(CONFIG.keys.cooldown, JSON.stringify({ until: now + CONFIG.cooldownMs }));
+    } catch {
+      // Without storage the cooldown only lasts for this page.
+    }
+  }
+
+  function inCooldown(storage, now) {
+    const cooldown = readJson(storage, CONFIG.keys.cooldown);
+    return Boolean(cooldown) && typeof cooldown.until === 'number' && now < cooldown.until;
+  }
+
   // ---- Core: fetching ----
 
   const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // One request, classified: ok | limited (429/503) | retry (5xx, network, timeout) | fail | aborted.
+  // Cloudflare marks its "Just a moment..." challenge responses with this header.
+  const isChallenge = (response) => response.status === 403 && Boolean(response.headers)
+    && typeof response.headers.get === 'function' && response.headers.get('cf-mitigated') === 'challenge';
+
+  // One request, classified: ok | limited (429/503/challenge) | retry (5xx, network, timeout) | fail | aborted.
   async function getPage(url, { fetch, signal, timeoutMs = CONFIG.timeoutMs }) {
     if (signal && signal.aborted) return { kind: 'aborted' };
     const timeout = AbortSignal.timeout(timeoutMs);
     try {
       const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, credentials: 'same-origin' });
       if (response.ok) return { kind: 'ok', text: await response.text() };
-      if (response.status === 429 || response.status === 503) return { kind: 'limited' };
+      if (response.status === 429 || response.status === 503 || isChallenge(response)) return { kind: 'limited' };
       return { kind: response.status >= 500 ? 'retry' : 'fail' };
     } catch {
       return { kind: signal && signal.aborted ? 'aborted' : 'retry' };
@@ -478,6 +497,11 @@
       for (let i = 0; i < numbers.length; i++) {
         const n = numbers[i];
         if (pages[i].kind === 'aborted') throw abortError();
+        if (pages[i].kind === 'limited') {
+          const error = new Error(`listing page ${n} was rate limited`);
+          error.name = 'RateLimitError';
+          throw error;
+        }
         const list = pages[i].kind === 'ok' ? extractAssignedJson(pages[i].text, 'b_productList') : null;
         if (!Array.isArray(list)) throw new Error(`listing page ${n} failed`);
         if (firstPageSize === null) firstPageSize = list.length;
@@ -723,8 +747,8 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
   }
 
   class CategoryPage {
-    constructor({ win, container, select, products, labels, cache, boot }) {
-      Object.assign(this, { win, container, select, products, labels, cache, boot });
+    constructor({ win, container, select, products, labels, cache, local, boot }) {
+      Object.assign(this, { win, container, select, products, labels, cache, local, boot });
       this.byId = new Map(products.map((p) => [p.id, p]));
       this.states = new Map();
       for (const product of products) {
@@ -759,10 +783,13 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         this.loading = Promise.resolve({ rateLimited: Boolean(boot.record.rateLimited), cancelled: false });
       } else {
         const missing = this.products.filter((p) => !this.states.has(p.id));
+        const run = this.coolingDown()
+          ? Promise.resolve(this.markFailed(missing))
+          : this.fetchMissing(missing, {
+            onProgress: (done, total) => this.status.progress(fill(labels.loadingNutrition, { done, total })),
+          });
         // Resolves only after the notice below, so it never overwrites a later sort flow's notice.
-        this.loading = this.fetchMissing(missing, {
-          onProgress: (done, total) => this.status.progress(fill(labels.loadingNutrition, { done, total })),
-        }).then((result) => {
+        this.loading = run.then((result) => {
           const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
           const text = composeNotice(labels, { failed, rateLimited: result.rateLimited });
           if (text) this.status.notice(text);
@@ -799,6 +826,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       };
       await this.loading;
       if (ac.signal.aborted) return undefined;
+      if (this.coolingDown()) return this.sortHereRateLimited(dir);
       progress(fill(labels.loadingPages, { n: 0 }));
       let products;
       try {
@@ -809,6 +837,10 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         });
       } catch (error) {
         if (ac.signal.aborted) return undefined;
+        if (error.name === 'RateLimitError') {
+          startCooldown(this.local, Date.now());
+          return this.sortHereRateLimited(dir);
+        }
         console.warn('[calorie-sort] could not load every page of the category', error);
         return this.fallbackToOnePage(dir);
       }
@@ -823,6 +855,8 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         onProgress: (done, total) => progress(fill(labels.loadingNutrition, { done, total })),
       });
       if (ac.signal.aborted) return undefined;
+      // Barbora is limiting us: a reload would likely land on its challenge page, so sort what is here.
+      if (rateLimited) return this.sortHereRateLimited(dir);
       const sorted = sortProducts(products, this.states, dir);
       const failed = sorted.filter((p) => this.stateOf(p.id).status === 'failed').map((p) => p.id);
       const record = { key: listKey(win.location), dir, savedAt: Date.now(), products: sorted, failed, rateLimited };
@@ -893,6 +927,22 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       this.status.notice(this.labels.fallback);
     }
 
+    async sortHereRateLimited(dir) {
+      await this.onePageSort(dir);
+      const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
+      this.status.notice(composeNotice(this.labels, { failed, rateLimited: true }));
+    }
+
+    coolingDown() {
+      return inCooldown(this.local, Date.now());
+    }
+
+    // During a cooldown nothing is fetched: unknown products show "?" and are retried later.
+    markFailed(products) {
+      for (const product of products) this.setState(product.id, { status: 'failed' });
+      return { rateLimited: true, cancelled: false };
+    }
+
     backToNormal() {
       const { location } = this.win;
       location.href = location.pathname + baseQuery(location.search);
@@ -943,6 +993,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
           if (!this.states.has(product.id)) this.setState(product.id, { status: 'failed' });
         }
       }
+      if (rateLimited) startCooldown(this.local, Date.now());
       this.cache.flush();
       return { cancelled, rateLimited };
     }
@@ -957,13 +1008,15 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       return null;
     }
     const language = win.b_data && win.b_data.selectedLanguageData;
+    const local = safeStorage(() => win.localStorage);
     const page = new CategoryPage({
       win,
       container,
       select: doc.querySelector('select.b-orderby'),
       products: win.b_productList,
       labels: pickLabels(language && language.locale),
-      cache: new NutritionCache(safeStorage(() => win.localStorage)),
+      cache: new NutritionCache(local),
+      local,
       boot,
     });
     page.init();
@@ -1011,6 +1064,8 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       NutritionCache,
       saveList,
       loadList,
+      startCooldown,
+      inCooldown,
       runPool,
       fetchNutrition,
       needsConfirm,

@@ -70,6 +70,13 @@ test('fetchNutrition: 429 and 503 are rateLimited', async () => {
   assert.deepEqual(await fetchNutrition('/p', { fetch: page(503), sleep: noSleep }), { status: 'rateLimited' });
 });
 
+test('fetchNutrition treats a Cloudflare challenge as rate limiting, a plain 403 as failed', async () => {
+  const challenge = async () => ({ ok: false, status: 403, headers: new Headers({ 'cf-mitigated': 'challenge' }), text: async () => '<title>Just a moment...</title>' });
+  assert.deepEqual(await fetchNutrition('/p', { fetch: challenge, sleep: noSleep }), { status: 'rateLimited' });
+  const forbidden = async () => ({ ok: false, status: 403, headers: new Headers(), text: async () => '' });
+  assert.deepEqual(await fetchNutrition('/p', { fetch: forbidden, sleep: noSleep }), { status: 'failed' });
+});
+
 test('fetchNutrition retries once after a network error or a 500', async () => {
   const sleeps = []; let calls = 0;
   const flaky = async () => { calls++; if (calls === 1) throw new TypeError('NetworkError'); return page(200, productHtml)(); };
@@ -138,6 +145,13 @@ test('collectCategory retries a failing listing page once, then rejects', async 
   };
   await assert.rejects(collectCategory(loc(), { fetch, sleep: noSleep }));
   assert.equal(calls, 2);
+});
+
+test('collectCategory reports rate limiting on a listing page as such', async () => {
+  const fetch = async (url) => (url === '/c'
+    ? { ok: true, status: 200, text: async () => listing(range(1, 52)) }
+    : { ok: false, status: 429, text: async () => '' });
+  await assert.rejects(collectCategory(loc(), { fetch, sleep: noSleep }), { name: 'RateLimitError' });
 });
 
 test('collectCategory rejects a page without a product list, and rejects with AbortError when cancelled', async () => {
