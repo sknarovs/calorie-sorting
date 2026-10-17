@@ -263,6 +263,89 @@
     return parts.join(' · ');
   }
 
+  // ---- Core: storage ----
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  const isQuotaError = (e) => Boolean(e) && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED');
+
+  function readJson(storage, key) {
+    try {
+      const raw = storage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function isFresh(entry, now) {
+    const days = entry.k === null ? CONFIG.cacheDaysNoData : CONFIG.cacheDaysData;
+    return now - entry.t < days * DAY_MS;
+  }
+
+  // Nutrition per product id, kept in localStorage as {id: {k: kcal | null, p: protein | null, t: savedAt}}.
+  class NutritionCache {
+    constructor(storage, { now = () => Date.now(), maxEntries = CONFIG.cacheMaxEntries, flushEvery = CONFIG.cacheFlushEvery } = {}) {
+      this.storage = storage;
+      this.now = now;
+      this.maxEntries = maxEntries;
+      this.flushEvery = flushEvery;
+      const saved = readJson(storage, CONFIG.keys.nutrition);
+      this.entries = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+      this.unsaved = {};
+      this.puts = 0;
+    }
+
+    get(id) {
+      const entry = this.entries[id];
+      if (!entry || !isFresh(entry, this.now())) return undefined;
+      return entry.k === null ? { status: 'none' } : { status: 'ok', kcal: entry.k, protein: entry.p };
+    }
+
+    put(id, state) {
+      if (state.status !== 'ok' && state.status !== 'none') return;
+      const t = this.now();
+      const entry = state.status === 'ok' ? { k: state.kcal, p: state.protein, t } : { k: null, p: null, t };
+      this.entries[id] = entry;
+      this.unsaved[id] = entry;
+      this.puts += 1;
+      if (this.puts % this.flushEvery === 0) this.flush();
+    }
+
+    // Merges this tab's new entries into what is stored now, so other tabs' writes survive.
+    flush() {
+      const stored = readJson(this.storage, CONFIG.keys.nutrition);
+      const merged = { ...(stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {}), ...this.unsaved };
+      let ids = Object.keys(merged).sort((a, b) => merged[b].t - merged[a].t).slice(0, this.maxEntries);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          this.storage.setItem(CONFIG.keys.nutrition, JSON.stringify(Object.fromEntries(ids.map((id) => [id, merged[id]]))));
+          this.unsaved = {};
+          return;
+        } catch (e) {
+          if (!isQuotaError(e) || attempt === 1) break;
+          ids = ids.slice(0, ids.length - Math.max(1, Math.ceil(ids.length / 4)));
+        }
+      }
+      console.warn('[calorie-sort] could not save nutrition values; keeping them for this page only');
+    }
+  }
+
+  function saveList(storage, record) {
+    try {
+      storage.setItem(CONFIG.keys.list, JSON.stringify(record));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function loadList(storage, key, dir, now) {
+    const record = readJson(storage, CONFIG.keys.list);
+    if (!record || record.key !== key || record.dir !== dir || !Array.isArray(record.products)) return null;
+    return now - record.savedAt <= CONFIG.listTtlMs ? record : null;
+  }
+
   // ---- Browser ----
 
   function start() {}
@@ -284,6 +367,10 @@
       fill,
       formatBadge,
       composeNotice,
+      isFresh,
+      NutritionCache,
+      saveList,
+      loadList,
     };
   } else {
     start();
