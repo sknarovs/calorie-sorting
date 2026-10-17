@@ -675,24 +675,30 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
   class StatusLine {
     constructor(container, labels) {
       this.labels = labels;
-      this.el = container.ownerDocument.createElement('div');
+      const doc = container.ownerDocument;
+      this.el = doc.createElement('div');
       this.el.className = 'bcs-status';
       this.el.setAttribute('role', 'status');
       this.el.hidden = true;
+      this.text = doc.createElement('span');
+      // One button for the line's lifetime: updates swap its label and handler, never the element,
+      // so a click is not lost while progress keeps ticking.
+      this.button = doc.createElement('button');
+      this.button.type = 'button';
+      this.button.className = 'bcs-status__action';
+      this.button.hidden = true;
+      this.button.addEventListener('click', () => {
+        if (this.onClick) this.onClick();
+      });
+      this.el.append(this.text, this.button);
       container.before(this.el);
     }
 
     show(text, buttonLabel, onClick) {
-      const doc = this.el.ownerDocument;
-      this.el.replaceChildren(doc.createTextNode(text));
-      if (buttonLabel) {
-        const button = doc.createElement('button');
-        button.type = 'button';
-        button.className = 'bcs-status__action';
-        button.textContent = buttonLabel;
-        button.addEventListener('click', onClick);
-        this.el.append(button);
-      }
+      this.text.textContent = text;
+      this.onClick = buttonLabel ? onClick : null;
+      this.button.textContent = buttonLabel || '';
+      this.button.hidden = !buttonLabel;
       this.el.hidden = false;
     }
 
@@ -705,7 +711,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
 
     clear() {
-      this.el.replaceChildren();
+      this.show('', null, null);
       this.el.hidden = true;
     }
   }
@@ -978,7 +984,9 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       const fetch = this.win.fetch.bind(this.win);
       const { cancelled, rateLimited } = await runPool(products, async (product, poolSignal) => {
         const result = await fetchNutrition(productUrl(product), { fetch, signal: poolSignal });
-        if (result.status !== 'rateLimited') this.setState(product.id, result);
+        // A request cut short by Cancel did not fail: leave the product unknown so it is fetched next time.
+        const cutShort = result.status === 'failed' && Boolean(poolSignal && poolSignal.aborted);
+        if (result.status !== 'rateLimited' && !cutShort) this.setState(product.id, result);
         return result;
       }, {
         concurrency: CONFIG.productConcurrency,
