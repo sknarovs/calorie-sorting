@@ -5,6 +5,10 @@
   "description": "Tampermonkey userscript: calorie badges and calorie sorting on barbora.lv category pages",
   "engines": { "node": ">=22" },
   "scripts": {
-    "test": "node --test \"test/unit/*.test.js\""
+    "test": "node --test \"test/unit/*.test.js\"",
+    "test:browser": "node --test --test-concurrency=1 \"test/browser/*.test.js\""
+  },
+  "devDependencies": {
+    "puppeteer-core": "25.12.0"
   }
 }

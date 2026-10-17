@@ -475,7 +475,186 @@
 
   // ---- Browser ----
 
-  function start() {}
+  const CARD_SELECTOR = 'li[data-cnstrc-item-id]';
+
+  const STYLE_CSS = `
+.bcs-badge { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; line-height: 16px; font-weight: 600; background: #e8f5e9; color: #1b5e20; white-space: normal; }
+.bcs-badge--loading { background: #f2f2f2; color: #9e9e9e; font-weight: 400; }
+.bcs-badge--none, .bcs-badge--failed { background: #f2f2f2; color: #757575; font-weight: 400; }
+.bcs-status { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: #fff8e1; color: #3e2723; font-size: 14px; line-height: 20px; }
+.bcs-status[hidden] { display: none; }
+.bcs-status__action { margin-left: 8px; padding: 0; border: 0; background: none; color: #c00; font: inherit; text-decoration: underline; cursor: pointer; }
+html.bcs-all-sorted ul.pagination { display: none !important; }
+`;
+
+  function injectStyle(doc) {
+    if (doc.getElementById('bcs-style')) return;
+    const style = doc.createElement('style');
+    style.id = 'bcs-style';
+    style.textContent = STYLE_CSS;
+    (doc.head || doc.documentElement).appendChild(style);
+  }
+
+  // The real storage, or an in-memory stand-in when the browser refuses access to it.
+  function safeStorage(get) {
+    try {
+      const storage = get();
+      if (storage) return storage;
+    } catch {
+      // Blocked storage (privacy settings): fall through to memory.
+    }
+    const data = new Map();
+    return {
+      getItem: (k) => (data.has(k) ? data.get(k) : null),
+      setItem: (k, v) => { data.set(k, String(v)); },
+      removeItem: (k) => { data.delete(k); },
+    };
+  }
+
+  // Keeps a badge (and, when sorting, a CSS `order`) on every card React renders.
+  class CardDecorator {
+    constructor(container, labels, stateOf) {
+      this.container = container;
+      this.labels = labels;
+      this.stateOf = stateOf;
+      this.ranks = null;
+      this.ordered = new WeakSet();
+    }
+
+    start() {
+      this.renderAll();
+      // Writes below only happen when something differs, so our own changes settle after one pass.
+      this.observer = new MutationObserver(() => this.renderAll());
+      this.observer.observe(this.container, { childList: true, subtree: true });
+    }
+
+    cards() {
+      return [...this.container.querySelectorAll(CARD_SELECTOR)];
+    }
+
+    ids() {
+      return this.cards().map((li) => li.getAttribute('data-cnstrc-item-id'));
+    }
+
+    update(id) {
+      const li = this.container.querySelector(`li[data-cnstrc-item-id="${CSS.escape(id)}"]`);
+      if (li) this.render(li);
+    }
+
+    setOrder(ranks) {
+      this.ranks = ranks;
+      this.renderAll();
+    }
+
+    renderAll() {
+      for (const li of this.cards()) this.render(li);
+    }
+
+    render(li) {
+      const id = li.getAttribute('data-cnstrc-item-id');
+      const { kind, text, title } = formatBadge(this.labels, this.stateOf(id));
+      const anchor = li.querySelector('[itemprop="offers"]') || li;
+      let badge = li.querySelector('.bcs-badge');
+      if (!badge || badge.parentElement !== anchor) {
+        if (badge) badge.remove();
+        badge = li.ownerDocument.createElement('span');
+        anchor.appendChild(badge);
+      }
+      const className = `bcs-badge bcs-badge--${kind}`;
+      if (badge.className !== className) badge.className = className;
+      if (badge.textContent !== text) badge.textContent = text;
+      if (badge.title !== title) badge.title = title;
+      if (this.ranks) {
+        const rank = String(this.ranks.has(id) ? this.ranks.get(id) : this.ranks.size);
+        if (li.style.order !== rank) li.style.order = rank;
+        this.ordered.add(li);
+      } else if (this.ordered.has(li)) {
+        li.style.removeProperty('order');
+        this.ordered.delete(li);
+      }
+    }
+  }
+
+  class CategoryPage {
+    constructor({ win, container, select, products, labels, cache, boot }) {
+      Object.assign(this, { win, container, select, products, labels, cache, boot });
+      this.byId = new Map(products.map((p) => [p.id, p]));
+      this.states = new Map();
+      for (const product of products) {
+        const cached = cache.get(product.id);
+        if (cached) this.states.set(product.id, cached);
+      }
+      this.decorator = new CardDecorator(container, labels, (id) => this.stateOf(id));
+    }
+
+    init() {
+      injectStyle(this.win.document);
+      this.decorator.start();
+      this.loading = this.fetchMissing(this.products.filter((p) => !this.states.has(p.id)));
+    }
+
+    stateOf(id) {
+      return this.states.get(id) || { status: 'loading' };
+    }
+
+    setState(id, state) {
+      this.states.set(id, state);
+      this.cache.put(id, state);
+      this.decorator.update(id);
+    }
+
+    async fetchMissing(products, { signal, onProgress } = {}) {
+      const fetch = this.win.fetch.bind(this.win);
+      const { cancelled, rateLimited } = await runPool(products, async (product, poolSignal) => {
+        const result = await fetchNutrition(productUrl(product), { fetch, signal: poolSignal });
+        if (result.status !== 'rateLimited') this.setState(product.id, result);
+        return result;
+      }, {
+        concurrency: CONFIG.productConcurrency,
+        signal,
+        isRateLimited: (result) => result.status === 'rateLimited',
+        onResult: (product, result, done, total) => {
+          if (onProgress) onProgress(done, total);
+        },
+      });
+      if (!cancelled) {
+        for (const product of products) {
+          if (!this.states.has(product.id)) this.setState(product.id, { status: 'failed' });
+        }
+      }
+      this.cache.flush();
+      return { cancelled, rateLimited };
+    }
+  }
+
+  function createCategoryPage(win, boot) {
+    const doc = win.document;
+    const container = doc.getElementById('category-page-results-placeholder');
+    if (!container) return null;
+    if (!Array.isArray(win.b_productList)) {
+      console.warn('[calorie-sort] product list not found');
+      return null;
+    }
+    const language = win.b_data && win.b_data.selectedLanguageData;
+    const page = new CategoryPage({
+      win,
+      container,
+      select: doc.querySelector('select.b-orderby'),
+      products: win.b_productList,
+      labels: pickLabels(language && language.locale),
+      cache: new NutritionCache(safeStorage(() => win.localStorage)),
+      boot,
+    });
+    page.init();
+    return page;
+  }
+
+  function start() {
+    const boot = {};
+    const go = () => createCategoryPage(window, boot);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true });
+    else go();
+  }
 
   if (typeof window === 'undefined') {
     module.exports = {
