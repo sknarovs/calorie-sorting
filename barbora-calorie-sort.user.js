@@ -346,6 +346,7 @@
   }
 
   function saveList(storage, record) {
+    if (storage.memoryOnly) return false; // the list must survive the reload, or we would reload forever
     try {
       storage.setItem(CONFIG.keys.list, JSON.stringify(record));
       return true;
@@ -575,6 +576,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
     const data = new Map();
     return {
+      memoryOnly: true, // nothing survives a reload
       getItem: (k) => (data.has(k) ? data.get(k) : null),
       setItem: (k, v) => { data.set(k, String(v)); },
       removeItem: (k) => { data.delete(k); },
@@ -1017,6 +1019,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       installSwapHook,
       markReload,
       consumeReload,
+      safeStorage,
     };
   } else {
     start();

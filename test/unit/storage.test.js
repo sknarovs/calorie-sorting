@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isFresh, NutritionCache, saveList, loadList } = require('../../barbora-calorie-sort.user.js');
+const { isFresh, NutritionCache, saveList, loadList, safeStorage } = require('../../barbora-calorie-sort.user.js');
 const { fakeStorage } = require('./helpers');
 
 const DAY = 86_400_000;
@@ -90,6 +90,12 @@ test('loadList rejects another key, another direction and lists older than 30 mi
   assert.equal(loadList(s, '/b', 'asc', 1001), null);
   assert.equal(loadList(s, '/a?brand=1', 'desc', 1001), null);
   assert.equal(loadList(s, '/a?brand=1', 'asc', 1000 + 31 * 60_000), null);
+});
+
+test('saveList refuses storage that only lives in memory, so a reload cannot lose the list', () => {
+  const memoryOnly = safeStorage(() => { throw new Error('storage blocked'); });
+  assert.equal(saveList(memoryOnly, record), false);
+  assert.equal(saveList(safeStorage(() => fakeStorage()), record), true);
 });
 
 test('saveList returns false when storage is full; loadList ignores corrupt data', () => {
