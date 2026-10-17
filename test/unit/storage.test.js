@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isFresh, NutritionCache, saveList, loadList, safeStorage } = require('../../barbora-calorie-sort.user.js');
+const { isFresh, NutritionCache } = require('../../barbora-calorie-sort.user.js');
 const { fakeStorage } = require('./helpers');
 
 const DAY = 86_400_000;
@@ -76,31 +76,4 @@ test('when storage stays full the cache keeps working from memory', () => {
   assert.deepEqual(c.get('a'), { status: 'ok', kcal: 10, protein: 1 });
 });
 
-const record = { key: '/a?brand=1', dir: 'asc', savedAt: 1000, products: [{ id: '1' }], failed: ['2'], rateLimited: false };
 
-test('saveList and loadList round-trip a matching, fresh list', () => {
-  const s = fakeStorage();
-  assert.equal(saveList(s, record), true);
-  assert.deepEqual(loadList(s, '/a?brand=1', 'asc', 1000 + 29 * 60_000), record);
-});
-
-test('loadList rejects another key, another direction and lists older than 30 minutes', () => {
-  const s = fakeStorage();
-  saveList(s, record);
-  assert.equal(loadList(s, '/b', 'asc', 1001), null);
-  assert.equal(loadList(s, '/a?brand=1', 'desc', 1001), null);
-  assert.equal(loadList(s, '/a?brand=1', 'asc', 1000 + 31 * 60_000), null);
-});
-
-test('saveList refuses storage that only lives in memory, so a reload cannot lose the list', () => {
-  const memoryOnly = safeStorage(() => { throw new Error('storage blocked'); });
-  assert.equal(saveList(memoryOnly, record), false);
-  assert.equal(saveList(safeStorage(() => fakeStorage()), record), true);
-});
-
-test('saveList returns false when storage is full; loadList ignores corrupt data', () => {
-  const s = fakeStorage({ reject: () => true });
-  assert.equal(saveList(s, record), false);
-  s.data.set('bcs:list:v1', '{not json');
-  assert.equal(loadList(s, '/a?brand=1', 'asc', 1001), null);
-});

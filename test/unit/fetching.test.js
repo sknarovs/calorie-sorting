@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { runPool, fetchNutrition, collectCategory } = require('../../barbora-calorie-sort.user.js');
+const { runPool, fetchNutrition } = require('../../barbora-calorie-sort.user.js');
 
 const tick = () => new Promise((r) => setImmediate(r));
 const noSleep = async () => {};
@@ -109,65 +109,4 @@ test('fetchNutrition does not retry after the caller aborts', async () => {
   const f = async (url, { signal }) => { calls++; throw signal.reason; };
   assert.deepEqual(await fetchNutrition('/p', { fetch: f, signal: ac.signal, sleep: noSleep }), { status: 'failed' });
   assert.ok(calls <= 1);
-});
-
-const listing = (items) => `<script>window.b_productList = ${JSON.stringify(items.map((i) => (typeof i === 'string' ? { id: i, Url: `p-${i}` } : i)))};</script>`;
-const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => String(from + i));
-function fakeSite(pages) {
-  const requested = [];
-  const fetch = async (url) => { requested.push(url); return { ok: true, status: 200, text: async () => listing(pages[url] ?? []) }; };
-  return { fetch, requested };
-}
-const loc = (search = '') => ({ pathname: '/c', search });
-
-test('collectCategory gathers pages until a short page, keeping filters', async () => {
-  const site = fakeSite({ '/c?brand=1': range(1, 52), '/c?brand=1&page=2': range(53, 104), '/c?brand=1&page=3': range(105, 110) });
-  const loaded = [];
-  const products = await collectCategory(loc('?brand=1&order=priceAsc&page=2'), { fetch: site.fetch, onPage: (n) => loaded.push(n), sleep: noSleep });
-  assert.deepEqual(products.map((p) => p.id), range(1, 110));
-  assert.deepEqual(site.requested, ['/c?brand=1', '/c?brand=1&page=2', '/c?brand=1&page=3']);
-  assert.deepEqual(loaded, [1, 2, 3]);
-});
-
-test('collectCategory stops at an empty page and at a page with nothing new', async () => {
-  const a = fakeSite({ '/c': range(1, 52), '/c?page=2': range(53, 104), '/c?page=3': [] });
-  assert.equal((await collectCategory(loc(), { fetch: a.fetch, sleep: noSleep })).length, 104);
-  const b = fakeSite({ '/c': range(1, 52), '/c?page=2': range(1, 52) });
-  assert.equal((await collectCategory(loc(), { fetch: b.fetch, sleep: noSleep })).length, 52);
-});
-
-test('collectCategory drops banners and duplicates', async () => {
-  const site = fakeSite({ '/c': ['1', '2', { id: 'b1', isBanner: true }, '2', '3'] });
-  assert.deepEqual((await collectCategory(loc(), { fetch: site.fetch, sleep: noSleep })).map((p) => p.id), ['1', '2', '3']);
-});
-
-test('collectCategory stops at the 60-page cap', async () => {
-  const pages = {};
-  for (let n = 1; n <= 70; n++) pages[n === 1 ? '/c' : `/c?page=${n}`] = range((n - 1) * 52 + 1, n * 52);
-  const site = fakeSite(pages);
-  assert.equal((await collectCategory(loc(), { fetch: site.fetch, sleep: noSleep })).length, 60 * 52);
-  assert.ok(site.requested.every((u) => !/page=(6[1-9]|70)$/.test(u)));
-});
-
-test('collectCategory retries a failing listing page once, then rejects', async () => {
-  let calls = 0;
-  const fetch = async (url) => {
-    if (url === '/c?page=2') { calls++; throw new TypeError('NetworkError'); }
-    return { ok: true, status: 200, text: async () => listing(url === '/c' ? range(1, 52) : []) };
-  };
-  await assert.rejects(collectCategory(loc(), { fetch, sleep: noSleep }));
-  assert.equal(calls, 2);
-});
-
-test('collectCategory reports rate limiting on a listing page as such', async () => {
-  const fetch = async (url) => (url === '/c'
-    ? { ok: true, status: 200, text: async () => listing(range(1, 52)) }
-    : { ok: false, status: 429, text: async () => '' });
-  await assert.rejects(collectCategory(loc(), { fetch, sleep: noSleep }), { name: 'RateLimitError' });
-});
-
-test('collectCategory rejects a page without a product list, and rejects with AbortError when cancelled', async () => {
-  await assert.rejects(collectCategory(loc(), { fetch: page(200, '<p>no list</p>'), sleep: noSleep }));
-  const ac = new AbortController(); ac.abort();
-  await assert.rejects(collectCategory(loc(), { fetch: fakeSite({ '/c': range(1, 5) }).fetch, signal: ac.signal, sleep: noSleep }), { name: 'AbortError' });
 });

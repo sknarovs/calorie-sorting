@@ -120,12 +120,12 @@ async function openCategory(browser, urlPath, { lang, before, intercept, product
 }
 
 // Cards are the grid's own <li>s, not products nested in a recommendations row.
-async function waitForBadges(page, timeoutMs = 90_000) {
+async function waitForBoxes(page, timeoutMs = 45_000) {
   await page.waitForFunction(() => {
     const cards = [...document.querySelectorAll('li[data-cnstrc-item-id]')].filter((li) => !li.parentElement.closest('li'));
     return cards.length > 0 && cards.every((li) => {
-      const badge = li.querySelector('.bcs-badge');
-      return badge && !badge.classList.contains('bcs-badge--loading');
+      const box = li.querySelector('.bcs-box');
+      return box && !box.classList.contains('bcs-box--loading');
     });
   }, { timeout: timeoutMs, polling: 250 });
 }
@@ -133,13 +133,13 @@ async function waitForBadges(page, timeoutMs = 90_000) {
 // Cards in visual order: by CSS `order`, then by position in the DOM.
 async function readCards(page) {
   const cards = await page.$$eval('li[data-cnstrc-item-id]', (lis) => lis.filter((li) => !li.parentElement.closest('li')).map((li, domIndex) => {
-    const badge = li.querySelector('.bcs-badge');
-    const kind = badge ? ((/bcs-badge--(\w+)/.exec(badge.className) || [])[1] || null) : null;
+    const box = li.querySelector('.bcs-box');
+    const kind = box ? ((/bcs-box--(\w+)/.exec(box.className) || [])[1] || null) : null;
     return {
       id: li.getAttribute('data-cnstrc-item-id'),
       domIndex,
       order: Number(getComputedStyle(li).order) || 0,
-      text: badge ? badge.textContent : null,
+      text: box ? [...box.children].map((line) => line.textContent).join(' · ') : null, // e.g. "172 kcal · 17 g olb."
       kind,
     };
   }));
@@ -188,5 +188,5 @@ function shot(name) {
 }
 
 module.exports = {
-  SITE, launchBrowser, openCategory, waitForBadges, readCards, parseKcal, assertCalorieOrder, currentUrl, productFetches, waitUntil, shot,
+  SITE, launchBrowser, openCategory, waitForBoxes, readCards, parseKcal, assertCalorieOrder, currentUrl, productFetches, waitUntil, shot,
 };

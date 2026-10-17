@@ -18,24 +18,18 @@
     kcalMax: 950,
     proteinMax: 100,
     kJPerKcal: 4.184,
-    productConcurrency: 4,
-    listingConcurrency: 3,
+    productConcurrency: 2, // gentle on Barbora's Cloudflare limits
+    minSpacingMs: 300,
     timeoutMs: 15000,
     retryDelayMs: 1000,
     backoffMs: 5000,
     maxRateLimited: 3,
-    maxPages: 60,
+    cooldownMs: 5 * 60 * 1000,
     cacheDaysData: 30,
     cacheDaysNoData: 7,
     cacheMaxEntries: 6000,
     cacheFlushEvery: 20,
-    listTtlMs: 30 * 60 * 1000,
-    reloadWindowMs: 15000,
-    confirmAbove: 300,
-    fetchesPerSecond: 30,
-    verifyTimeoutMs: 10000,
-    cooldownMs: 5 * 60 * 1000,
-    keys: { nutrition: 'bcs:nutrition:v1', list: 'bcs:list:v1', reload: 'bcs:reload', cooldown: 'bcs:cooldown' },
+    keys: { nutrition: 'bcs:nutrition:v1', cooldown: 'bcs:cooldown' },
   };
 
   // ---- Core: page data and nutrition ----
@@ -134,39 +128,6 @@
     return match ? match[1] : null;
   }
 
-  // The current filters, without the site's own sort order and page number.
-  function filterParams(search) {
-    const params = new URLSearchParams(search);
-    params.delete('order');
-    params.delete('page');
-    return params;
-  }
-
-  const toQuery = (params) => {
-    const query = params.toString();
-    return query ? `?${query}` : '';
-  };
-
-  function baseQuery(search) {
-    return toQuery(filterParams(search));
-  }
-
-  function listingUrl(loc, page) {
-    const params = filterParams(loc.search);
-    if (page >= 2) params.set('page', String(page));
-    return loc.pathname + toQuery(params);
-  }
-
-  function listKey(loc) {
-    const params = filterParams(loc.search);
-    params.sort();
-    return loc.pathname + toQuery(params);
-  }
-
-  function sortedViewUrl(loc, dir) {
-    return `${loc.pathname}${baseQuery(loc.search)}#kcal-${dir}`;
-  }
-
   function productUrl(product) {
     return `/produkti/${product.Url}`;
   }
@@ -193,19 +154,11 @@
       boxTitle: 'uz 100 g/ml · olb. — olbaltumvielas',
       sortAsc: 'Kalorijas (augoši)',
       sortDesc: 'Kalorijas (dilstoši)',
-      badge: '{k} kcal · {p} g olbaltumvielu',
-      badgeKcalOnly: '{k} kcal',
-      badgeTitle: 'uz 100 g/ml',
       noData: 'nav datu',
       failedTitle: 'Neizdevās ielādēt',
-      loadingPages: 'Ielādē kategorijas lapas… {n}',
       loadingNutrition: 'Ielādē uzturvērtību: {done} / {total}',
       cancel: 'Atcelt',
-      confirm: 'Ielādējamo preču lapu skaits: {n} (apmēram {s} s). Turpināt?',
-      allSorted: 'Visas preces ({n}) sakārtotas pēc kalorijām',
       someFailed: 'Neizdevās ielādēt: {n}',
-      backToNormal: 'Atgriezties parastajā skatā',
-      fallback: 'Neizdevās parādīt visas lapas — sakārtota tikai šī lapa',
       rateLimited: 'Barbora ierobežo pieprasījumus — sakārtots pēc jau ielādētajiem datiem',
     },
     en: {
@@ -215,19 +168,11 @@
       boxTitle: 'per 100 g/ml',
       sortAsc: 'Calories from lowest',
       sortDesc: 'Calories from highest',
-      badge: '{k} kcal · {p} g protein',
-      badgeKcalOnly: '{k} kcal',
-      badgeTitle: 'per 100 g/ml',
       noData: 'no data',
       failedTitle: "Couldn't load",
-      loadingPages: 'Loading category pages… {n}',
       loadingNutrition: 'Loading nutrition: {done} / {total}',
       cancel: 'Cancel',
-      confirm: 'This will load {n} product pages (about {s} s). Continue?',
-      allSorted: 'All {n} products sorted by calories',
       someFailed: "{n} couldn't be loaded",
-      backToNormal: 'Back to normal view',
-      fallback: "Couldn't show all pages — sorted this page only",
       rateLimited: 'Barbora is limiting requests — sorted with the data loaded so far',
     },
     ru: {
@@ -237,19 +182,11 @@
       boxTitle: 'на 100 г/мл',
       sortAsc: 'Калорийности от самой низкой',
       sortDesc: 'Калорийности от самой высокой',
-      badge: '{k} ккал · {p} г белка',
-      badgeKcalOnly: '{k} ккал',
-      badgeTitle: 'на 100 г/мл',
       noData: 'нет данных',
       failedTitle: 'Не удалось загрузить',
-      loadingPages: 'Загрузка страниц категории… {n}',
       loadingNutrition: 'Загрузка пищевой ценности: {done} / {total}',
       cancel: 'Отмена',
-      confirm: 'Будет загружено страниц товаров: {n} (около {s} с). Продолжить?',
-      allSorted: 'Все товары ({n}) отсортированы по калориям',
       someFailed: 'Не удалось загрузить: {n}',
-      backToNormal: 'Вернуться к обычному виду',
-      fallback: 'Не удалось показать все страницы — отсортирована только эта страница',
       rateLimited: 'Barbora ограничивает запросы — отсортировано по уже загруженным данным',
     },
   };
@@ -260,23 +197,6 @@
 
   function fill(template, values) {
     return template.replace(/\{(\w+)\}/g, (whole, key) => (key in values ? String(values[key]) : whole));
-  }
-
-  function formatBadge(labels, state) {
-    const number = (value, digits) => new Intl.NumberFormat(labels.locale, { maximumFractionDigits: digits }).format(value);
-    switch (state.status) {
-      case 'ok': {
-        const k = number(state.kcal, 0);
-        const text = state.protein === null ? fill(labels.badgeKcalOnly, { k }) : fill(labels.badge, { k, p: number(state.protein, 1) });
-        return { kind: 'ok', text, title: labels.badgeTitle };
-      }
-      case 'none':
-        return { kind: 'none', text: labels.noData, title: '' };
-      case 'failed':
-        return { kind: 'failed', text: '?', title: labels.failedTitle };
-      default:
-        return { kind: 'loading', text: fill(labels.badgeKcalOnly, { k: '…' }), title: '' };
-    }
   }
 
   const numberFormats = new Map();
@@ -303,9 +223,8 @@
     }
   }
 
-  function composeNotice(labels, { total, failed, rateLimited }) {
+  function composeNotice(labels, { failed, rateLimited }) {
     const parts = [];
-    if (total !== undefined) parts.push(fill(labels.allSorted, { n: total }));
     if (failed > 0) parts.push(fill(labels.someFailed, { n: failed }));
     if (rateLimited) parts.push(labels.rateLimited);
     return parts.join(' · ');
@@ -377,22 +296,6 @@
       }
       console.warn('[calorie-sort] could not save nutrition values; keeping them for this page only');
     }
-  }
-
-  function saveList(storage, record) {
-    if (storage.memoryOnly) return false; // the list must survive the reload, or we would reload forever
-    try {
-      storage.setItem(CONFIG.keys.list, JSON.stringify(record));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  function loadList(storage, key, dir, now) {
-    const record = readJson(storage, CONFIG.keys.list);
-    if (!record || record.key !== key || record.dir !== dir || !Array.isArray(record.products)) return null;
-    return now - record.savedAt <= CONFIG.listTtlMs ? record : null;
   }
 
   // After Barbora limits requests, every tab stops fetching for a while instead of adding to the block.
@@ -525,100 +428,6 @@
     });
   }
 
-  function needsConfirm(count) {
-    return count > CONFIG.confirmAbove;
-  }
-
-  function estimateSeconds(count) {
-    return Math.max(1, Math.round(count / CONFIG.fetchesPerSecond));
-  }
-
-  // All products of the category the user is looking at (current filters, every page), in site order.
-  async function collectCategory(loc, deps) {
-    const { signal, onPage, concurrency = CONFIG.listingConcurrency, maxPages = CONFIG.maxPages } = deps;
-    const abortError = () => new DOMException('Aborted', 'AbortError');
-    const products = [];
-    const seen = new Set();
-    let firstPageSize = null;
-    for (let first = 1; first <= maxPages; first += concurrency) {
-      if (signal && signal.aborted) throw abortError();
-      const numbers = [];
-      for (let n = first; n < first + concurrency && n <= maxPages; n++) numbers.push(n);
-      const pages = await Promise.all(numbers.map((n) => getPageWithRetry(listingUrl(loc, n), deps)));
-      for (let i = 0; i < numbers.length; i++) {
-        const n = numbers[i];
-        if (pages[i].kind === 'aborted') throw abortError();
-        if (pages[i].kind === 'limited') {
-          const error = new Error(`listing page ${n} was rate limited`);
-          error.name = 'RateLimitError';
-          throw error;
-        }
-        const list = pages[i].kind === 'ok' ? extractAssignedJson(pages[i].text, 'b_productList') : null;
-        if (!Array.isArray(list)) throw new Error(`listing page ${n} failed`);
-        if (firstPageSize === null) firstPageSize = list.length;
-        let added = 0;
-        for (const item of list) {
-          if (item && item.id && !item.isBanner && !seen.has(item.id)) {
-            seen.add(item.id);
-            products.push(item);
-            added += 1;
-          }
-        }
-        if (onPage) onPage(n);
-        if (list.length === 0 || list.length < firstPageSize || added === 0 || n === maxPages) return products;
-      }
-    }
-    return products;
-  }
-
-  // ---- Core: list swap ----
-
-  // Hands the site a saved, sorted product list in place of the one its page script assigns.
-  function installSwapHook(win, record) {
-    const swap = { swapped: false, original: null };
-    if (Array.isArray(win.b_productList)) {
-      // Injected after the page assigned its list: replace it, React may not have rendered yet.
-      swap.original = win.b_productList;
-      win.b_productList = record.products;
-      swap.swapped = true;
-      return swap;
-    }
-    try {
-      Object.defineProperty(win, 'b_productList', {
-        configurable: true,
-        enumerable: true,
-        get: () => record.products,
-        set: (value) => {
-          swap.original = value;
-          swap.swapped = true;
-        },
-      });
-    } catch (error) {
-      console.warn('[calorie-sort] could not hook the product list', error);
-    }
-    return swap;
-  }
-
-  // A short-lived flag set just before the script reloads the page, so the next load can tell
-  // "we reloaded but could not show the saved list" apart from a normal visit (no reload loops).
-  function markReload(storage, now) {
-    try {
-      storage.setItem(CONFIG.keys.reload, JSON.stringify({ at: now }));
-    } catch {
-      // Without the flag the saved list still guards against loops.
-    }
-  }
-
-  function consumeReload(storage, now) {
-    const flag = readJson(storage, CONFIG.keys.reload);
-    try {
-      storage.removeItem(CONFIG.keys.reload);
-    } catch {
-      // Nothing to clean up.
-    }
-    return Boolean(flag) && typeof flag.at === 'number' && now - flag.at <= CONFIG.reloadWindowMs;
-  }
-
   // ---- Browser ----
 
   const CARD_SELECTOR = 'li[data-cnstrc-item-id]';
@@ -626,14 +435,20 @@
   // row in the grid whose carousel items also carry data-cnstrc-item-id; those are not cards.
   const isCard = (li) => !li.parentElement || !li.parentElement.closest('li');
 
+  // The kcal box sits in the price row like a second price box; other blocks of the price area
+  // keep their own line underneath.
   const STYLE_CSS = `
-.bcs-badge { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; line-height: 16px; font-weight: 600; background: #e8f5e9; color: #1b5e20; white-space: normal; }
-.bcs-badge--loading { background: #f2f2f2; color: #9e9e9e; font-weight: 400; }
-.bcs-badge--none, .bcs-badge--failed { background: #f2f2f2; color: #757575; font-weight: 400; }
+[itemprop="offers"]:has(> .bcs-box) { display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: 4px; }
+[itemprop="offers"]:has(> .bcs-box) > .bcs-box { order: 1; }
+[itemprop="offers"]:has(> .bcs-box) > div:not(:first-of-type) { order: 2; flex-basis: 100%; }
+.bcs-box { box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; min-height: 60px; margin-bottom: 2px; padding: 7px 8px; border: 1px solid #c8e6c9; border-radius: 8px; background: #e8f5e9; color: #1b5e20; white-space: nowrap; }
+.bcs-box__main { font-size: 16px; line-height: 24px; font-weight: 700; }
+.bcs-box__sub { margin-top: 2px; font-size: 12px; line-height: 16px; font-weight: 600; }
+.bcs-box--none, .bcs-box--failed { border-color: #e0e0e0; background: #f5f5f5; color: #757575; }
+.bcs-box--loading { border-color: #eeeeee; background: #fafafa; color: #9e9e9e; }
 .bcs-status { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: #fff8e1; color: #3e2723; font-size: 14px; line-height: 20px; }
 .bcs-status[hidden] { display: none; }
 .bcs-status__action { margin-left: 8px; padding: 0; border: 0; background: none; color: #c00; font: inherit; text-decoration: underline; cursor: pointer; }
-html.bcs-all-sorted ul.pagination { display: none !important; }
 `;
 
   function injectStyle(doc) {
@@ -654,14 +469,13 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
     const data = new Map();
     return {
-      memoryOnly: true, // nothing survives a reload
       getItem: (k) => (data.has(k) ? data.get(k) : null),
       setItem: (k, v) => { data.set(k, String(v)); },
       removeItem: (k) => { data.delete(k); },
     };
   }
 
-  // Keeps a badge (and, when sorting, a CSS `order`) on every card React renders.
+  // Keeps a kcal box (and, when sorting, a CSS `order`) on every card React renders.
   class CardDecorator {
     constructor(container, labels, stateOf) {
       this.container = container;
@@ -680,10 +494,6 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
 
     cards() {
       return [...this.container.querySelectorAll(CARD_SELECTOR)].filter(isCard);
-    }
-
-    ids() {
-      return this.cards().map((li) => li.getAttribute('data-cnstrc-item-id'));
     }
 
     update(id) {
@@ -705,7 +515,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       if (grid) for (const child of grid.children) if (!isOwnCard.has(child)) this.applyOrder(child, this.ranks && this.ranks.size + 1);
     }
 
-    // Sets the CSS order (or removes the one this decorator set when rank is null).
+    // Sets the CSS order (or removes the one this decorator set when there are no ranks).
     applyOrder(el, rank) {
       if (this.ranks) {
         const order = String(rank);
@@ -719,23 +529,40 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
 
     render(li) {
       const id = li.getAttribute('data-cnstrc-item-id');
-      const { kind, text, title } = formatBadge(this.labels, this.stateOf(id));
-      const anchor = li.querySelector('[itemprop="offers"]') || li;
-      let badge = li.querySelector('.bcs-badge');
-      if (!badge || badge.parentElement !== anchor) {
-        if (badge) badge.remove();
-        badge = li.ownerDocument.createElement('span');
-        anchor.appendChild(badge);
+      const state = this.stateOf(id);
+      let box = li.querySelector('.bcs-box');
+      if (!state) {
+        if (box) box.remove(); // nothing known or loading yet: no box
+      } else {
+        const anchor = li.querySelector('[itemprop="offers"]') || li;
+        if (!box || box.parentElement !== anchor) {
+          if (box) box.remove();
+          box = li.ownerDocument.createElement('span');
+          anchor.appendChild(box);
+        }
+        this.paint(box, formatBox(this.labels, state));
       }
-      const className = `bcs-badge bcs-badge--${kind}`;
-      if (badge.className !== className) badge.className = className;
-      if (badge.textContent !== text) badge.textContent = text;
-      if (badge.title !== title) badge.title = title;
       this.applyOrder(li, this.ranks && (this.ranks.has(id) ? this.ranks.get(id) : this.ranks.size));
+    }
+
+    paint(box, { kind, lines, title }) {
+      const className = `bcs-box bcs-box--${kind}`;
+      if (box.className !== className) box.className = className;
+      if (box.title !== title) box.title = title;
+      const text = lines.join('\n');
+      if (box.dataset.lines === text) return;
+      box.dataset.lines = text;
+      const doc = box.ownerDocument;
+      box.replaceChildren(...lines.map((line, index) => {
+        const span = doc.createElement('span');
+        span.className = index === 0 ? 'bcs-box__main' : 'bcs-box__sub';
+        span.textContent = line;
+        return span;
+      }));
     }
   }
 
-  // One line above the product grid for progress, notices and the all-sorted banner.
+  // One line above the product grid for progress and notices.
   class StatusLine {
     constructor(container, labels) {
       this.labels = labels;
@@ -770,8 +597,8 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       this.show(text, onCancel ? this.labels.cancel : null, onCancel);
     }
 
-    notice(text, action) {
-      this.show(text, action ? action.label : null, action ? action.onClick : null);
+    notice(text) {
+      this.show(text, null, null);
     }
 
     clear() {
@@ -816,15 +643,17 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
     }
   }
 
+  // Sorts the products on screen by calories. Values are only loaded when a sort asks for them;
+  // browsing shows the ones already saved and requests nothing.
   class CategoryPage {
     constructor({ win, container, select, products, labels, cache, local, boot }) {
       Object.assign(this, { win, container, select, products, labels, cache, local, boot });
-      this.byId = new Map(products.map((p) => [p.id, p]));
       this.states = new Map();
       for (const product of products) {
         const cached = cache.get(product.id);
         if (cached) this.states.set(product.id, cached);
       }
+      this.waiting = new Set(); // ids being loaded right now, shown as "… kcal"
       this.decorator = new CardDecorator(container, labels, (id) => this.stateOf(id));
     }
 
@@ -840,167 +669,85 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         this.sortControl.install();
         if (boot.marker) this.sortControl.show(boot.marker);
       }
-      const allSortedView = Boolean(boot.swap && boot.swap.swapped);
-      if (allSortedView) {
-        // Every product here was processed before the reload: values come from the cache.
-        for (const id of boot.record.failed) this.states.set(id, { status: 'failed' });
-        for (const product of this.products) {
-          if (!this.states.has(product.id)) this.states.set(product.id, { status: 'failed' });
-        }
-      }
       this.decorator.start();
-      if (allSortedView) {
-        this.loading = Promise.resolve({ rateLimited: Boolean(boot.record.rateLimited), cancelled: false });
-      } else {
-        const missing = this.products.filter((p) => !this.states.has(p.id));
-        const run = this.coolingDown()
-          ? Promise.resolve(this.markFailed(missing))
-          : this.fetchMissing(missing, {
-            onProgress: (done, total) => this.status.progress(fill(labels.loadingNutrition, { done, total })),
-          });
-        // Resolves only after the notice below, so it never overwrites a later sort flow's notice.
-        this.loading = run.then((result) => {
-          const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
-          const text = composeNotice(labels, { failed, rateLimited: result.rateLimited });
-          if (text) this.status.notice(text);
-          else this.status.clear();
-          return result;
-        });
-      }
-      if (!boot.marker) return;
-      if (allSortedView) this.verifyAllSorted();
-      else if (boot.record || boot.justReloaded) this.fallbackToOnePage(boot.marker); // never reload twice
-      else this.sort(boot.marker);
+      if (boot.marker) this.sort(boot.marker);
     }
 
-    isMultiPage() {
-      const { document, location } = this.win;
-      return Boolean(document.querySelector('.pagination a[href*="page="]')) || Number(new URLSearchParams(location.search).get('page')) > 1;
+    stateOf(id) {
+      if (this.states.has(id)) return this.states.get(id);
+      return this.waiting.has(id) ? { status: 'loading' } : null;
     }
 
-    sort(dir) {
-      if (this.allSorted) return this.switchDirection(dir);
-      return this.isMultiPage() ? this.multiPageSort(dir) : this.onePageSort(dir);
+    setState(id, state) {
+      this.waiting.delete(id);
+      this.states.set(id, state);
+      this.cache.put(id, state);
+      this.decorator.update(id);
     }
 
-    // Collects every page of the category, saves the sorted list for this tab and reloads;
-    // the list swap then hands that list to the site, which draws all products as normal cards.
-    async multiPageSort(dir) {
-      const { win, labels, boot, status } = this;
-      if (this.abort) this.abort.abort(); // a new choice replaces a running one
+    // Reorders the cards on screen with CSS `order`; React's DOM stays untouched. Products with
+    // equal values keep the order the site showed them in (e.g. its price-per-unit sort).
+    async sort(dir) {
+      this.wanted = dir;
+      const { cancelled, rateLimited } = await this.loadMissing();
+      if (cancelled || this.wanted !== dir) return; // cancelled, or a newer choice finishes the job
+      const ranks = new Map(sortProducts(this.products, this.states, dir).map((product, index) => [product.id, index]));
+      this.decorator.setOrder(ranks);
+      const { location, history } = this.win;
+      history.replaceState(history.state, '', `${location.pathname}${location.search}#kcal-${dir}`);
+      if (this.sortControl) this.sortControl.show(dir);
+      const failed = this.products.filter((p) => (this.stateOf(p.id) || {}).status === 'failed').length;
+      const text = composeNotice(this.labels, { failed, rateLimited });
+      if (text) this.status.notice(text);
+      else this.status.clear();
+    }
+
+    // One loading run at a time: a second choice made while loading waits for the same run.
+    loadMissing() {
+      if (this.run) return this.run;
+      const missing = this.products.filter((p) => !this.states.has(p.id));
+      if (!missing.length) return Promise.resolve({ cancelled: false, rateLimited: false });
+      if (this.coolingDown()) return Promise.resolve(this.markFailed(missing));
       const ac = new AbortController();
       this.abort = ac;
-      // Requests finishing after Cancel must not bring the status line back.
-      const progress = (text) => {
-        if (!ac.signal.aborted) status.progress(text, () => this.cancel());
-      };
-      await this.loading;
-      if (ac.signal.aborted) return undefined;
-      if (this.coolingDown()) return this.sortHereRateLimited(dir);
-      progress(fill(labels.loadingPages, { n: 0 }));
-      let products;
-      try {
-        products = await collectCategory(win.location, {
-          fetch: win.fetch.bind(win),
-          signal: ac.signal,
-          onPage: (n) => progress(fill(labels.loadingPages, { n })),
-        });
-      } catch (error) {
-        if (ac.signal.aborted) return undefined;
-        if (error.name === 'RateLimitError') {
-          startCooldown(this.local, Date.now());
-          return this.sortHereRateLimited(dir);
-        }
-        console.warn('[calorie-sort] could not load every page of the category', error);
-        return this.fallbackToOnePage(dir);
-      }
-      const missing = products.filter((p) => !this.states.has(p.id));
-      const question = fill(labels.confirm, { n: missing.length, s: estimateSeconds(missing.length) });
-      if (needsConfirm(missing.length) && !win.confirm(question)) {
-        this.cancel();
-        return undefined;
-      }
-      const { rateLimited } = await this.fetchMissing(missing, {
+      for (const product of missing) this.waiting.add(product.id);
+      this.decorator.renderAll();
+      this.run = this.fetchMissing(missing, {
         signal: ac.signal,
-        onProgress: (done, total) => progress(fill(labels.loadingNutrition, { done, total })),
+        // Requests finishing after Cancel must not bring the status line back.
+        onProgress: (done, total) => {
+          if (!ac.signal.aborted) this.status.progress(fill(this.labels.loadingNutrition, { done, total }), () => this.cancel());
+        },
+      }).finally(() => {
+        this.run = null;
+        this.abort = null;
       });
-      if (ac.signal.aborted) return undefined;
-      // Barbora is limiting us: a reload would likely land on its challenge page, so sort what is here.
-      if (rateLimited) return this.sortHereRateLimited(dir);
-      const sorted = sortProducts(products, this.states, dir);
-      const failed = sorted.filter((p) => this.stateOf(p.id).status === 'failed').map((p) => p.id);
-      const record = { key: listKey(win.location), dir, savedAt: Date.now(), products: sorted, failed, rateLimited };
-      if (!saveList(boot.session, record)) return this.fallbackToOnePage(dir);
-      markReload(boot.session, Date.now());
-      win.history.replaceState(null, '', sortedViewUrl(win.location, dir));
-      win.location.reload();
-      return undefined;
-    }
-
-    // After the reload: did React draw the whole saved list? If not, sort what is on screen.
-    async verifyAllSorted() {
-      const { record, marker } = this.boot;
-      const total = record.products.length;
-      if (!(await this.waitForCardCount(total, CONFIG.verifyTimeoutMs))) return this.fallbackToOnePage(marker);
-      this.allSorted = true;
-      this.win.document.documentElement.classList.add('bcs-all-sorted');
-      if (this.sortControl) this.sortControl.show(marker);
-      this.status.notice(composeNotice(this.labels, { total, failed: record.failed.length, rateLimited: Boolean(record.rateLimited) }), {
-        label: this.labels.backToNormal,
-        onClick: () => this.backToNormal(),
-      });
-      return undefined;
-    }
-
-    waitForCardCount(count, timeoutMs) {
-      return new Promise((resolve) => {
-        const matches = () => this.decorator.ids().length === count;
-        if (matches()) {
-          resolve(true);
-          return;
-        }
-        const observer = new MutationObserver(() => {
-          if (!matches()) return;
-          observer.disconnect();
-          clearTimeout(timer);
-          resolve(true);
-        });
-        const timer = setTimeout(() => {
-          observer.disconnect();
-          resolve(matches());
-        }, timeoutMs);
-        observer.observe(this.container, { childList: true, subtree: true });
-      });
+      return this.run;
     }
 
     cancel() {
-      if (this.abort) this.abort.abort();
-      this.abort = null;
+      this.stopLoading();
       this.status.clear();
       if (this.sortControl) this.sortControl.show(null);
+      this.dropMarker();
     }
 
-    // In the all-sorted view every value is known already: re-sort the saved list and reload.
-    switchDirection(dir) {
-      const { win, boot } = this;
-      if (Date.now() - boot.record.savedAt > CONFIG.listTtlMs) return this.multiPageSort(dir); // stale: rebuild
-      const record = { ...boot.record, dir, products: sortProducts(boot.record.products, this.states, dir) };
-      if (!saveList(boot.session, record)) return this.fallbackToOnePage(dir);
-      markReload(boot.session, Date.now());
-      win.history.replaceState(null, '', sortedViewUrl(win.location, dir));
-      win.location.reload();
-      return undefined;
+    leaveCalorieMode() {
+      this.stopLoading();
+      this.dropMarker();
+      this.decorator.setOrder(null);
     }
 
-    async fallbackToOnePage(dir) {
-      await this.onePageSort(dir);
-      this.status.notice(this.labels.fallback);
+    stopLoading() {
+      this.wanted = null;
+      if (this.abort) this.abort.abort();
+      this.waiting.clear();
+      this.decorator.renderAll();
     }
 
-    async sortHereRateLimited(dir) {
-      await this.onePageSort(dir);
-      const failed = this.products.filter((p) => this.stateOf(p.id).status === 'failed').length;
-      this.status.notice(composeNotice(this.labels, { failed, rateLimited: true }));
+    dropMarker() {
+      const { location, history } = this.win;
+      if (parseMarker(location.hash)) history.replaceState(history.state, '', location.pathname + location.search);
     }
 
     coolingDown() {
@@ -1013,39 +760,9 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       return { rateLimited: true, cancelled: false };
     }
 
-    backToNormal() {
-      const { location } = this.win;
-      location.href = location.pathname + baseQuery(location.search);
-    }
-
-    // Reorders the cards already on screen with CSS `order`; React's DOM stays untouched.
-    async onePageSort(dir) {
-      await this.loading;
-      const ranks = new Map(sortProducts(this.products, this.states, dir).map((product, index) => [product.id, index]));
-      this.decorator.setOrder(ranks);
-      const { pathname, search } = this.win.location;
-      this.win.history.replaceState(null, '', `${pathname}${search}#kcal-${dir}`);
-      if (this.sortControl) this.sortControl.show(dir);
-    }
-
-    leaveCalorieMode() {
-      const { location, history } = this.win;
-      if (parseMarker(location.hash)) history.replaceState(null, '', location.pathname + location.search);
-      this.decorator.setOrder(null);
-    }
-
-    stateOf(id) {
-      return this.states.get(id) || { status: 'loading' };
-    }
-
-    setState(id, state) {
-      this.states.set(id, state);
-      this.cache.put(id, state);
-      this.decorator.update(id);
-    }
-
     async fetchMissing(products, { signal, onProgress } = {}) {
       const fetch = this.win.fetch.bind(this.win);
+      if (onProgress) onProgress(0, products.length);
       const { cancelled, rateLimited } = await runPool(products, async (product, poolSignal) => {
         const result = await fetchNutrition(productUrl(product), { fetch, signal: poolSignal });
         // A request cut short by Cancel did not fail: leave the product unknown so it is fetched next time.
@@ -1054,6 +771,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
         return result;
       }, {
         concurrency: CONFIG.productConcurrency,
+        minSpacingMs: CONFIG.minSpacingMs,
         signal,
         isRateLimited: (result) => result.status === 'rateLimited',
         onResult: (product, result, done, total) => {
@@ -1079,13 +797,15 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       console.warn('[calorie-sort] product list not found');
       return null;
     }
+    const select = doc.querySelector('select.b-orderby');
+    if (!select) console.warn('[calorie-sort] sort dropdown not found');
     const language = win.b_data && win.b_data.selectedLanguageData;
     const local = safeStorage(() => win.localStorage);
     const page = new CategoryPage({
       win,
       container,
-      select: doc.querySelector('select.b-orderby'),
-      products: win.b_productList,
+      select,
+      products: win.b_productList.filter((p) => p && p.id && !p.isBanner),
       labels: pickLabels(language && language.locale),
       cache: new NutritionCache(local),
       local,
@@ -1096,13 +816,7 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
   }
 
   function start() {
-    // Everything up to the list swap must happen now, before the page assigns its product list.
-    const session = safeStorage(() => window.sessionStorage);
-    const marker = parseMarker(location.hash);
-    const justReloaded = consumeReload(session, Date.now());
-    const record = marker ? loadList(session, listKey(location), marker, Date.now()) : null;
-    const swap = record ? installSwapHook(window, record) : null;
-    const boot = { marker, record, swap, justReloaded, session };
+    const boot = { marker: parseMarker(location.hash) };
     let page = null;
     window.addEventListener('change', (event) => {
       const target = event.target;
@@ -1121,32 +835,19 @@ html.bcs-all-sorted ul.pagination { display: none !important; }
       extractAssignedJson,
       readNutrition,
       parseMarker,
-      baseQuery,
-      listingUrl,
-      listKey,
-      sortedViewUrl,
       productUrl,
       sortProducts,
       LABELS,
       pickLabels,
       fill,
-      formatBadge,
       formatBox,
       composeNotice,
       isFresh,
       NutritionCache,
-      saveList,
-      loadList,
       startCooldown,
       inCooldown,
       runPool,
       fetchNutrition,
-      needsConfirm,
-      estimateSeconds,
-      collectCategory,
-      installSwapHook,
-      markReload,
-      consumeReload,
       safeStorage,
     };
   } else {

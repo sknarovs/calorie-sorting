@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseMarker, baseQuery, listingUrl, listKey, sortedViewUrl, productUrl, sortProducts } = require('../../barbora-calorie-sort.user.js');
+const { parseMarker, productUrl, sortProducts } = require('../../barbora-calorie-sort.user.js');
 
 test('parseMarker', () => {
   assert.equal(parseMarker('#kcal-asc'), 'asc');
@@ -8,30 +8,6 @@ test('parseMarker', () => {
   assert.equal(parseMarker(''), null);
   assert.equal(parseMarker('#kcal-up'), null);
   assert.equal(parseMarker('#reviews'), null);
-});
-
-test('baseQuery drops order and page but keeps filters in their order', () => {
-  assert.equal(baseQuery('?brand=3583&order=priceAsc&page=3&country=LV'), '?brand=3583&country=LV');
-  assert.equal(baseQuery('?page=2'), '');
-  assert.equal(baseQuery(''), '');
-});
-
-test('listingUrl keeps filters, drops order, numbers pages from 2', () => {
-  const loc = { pathname: '/piena-produkti-un-olas/jogurti', search: '?order=priceAsc&brand=135&page=4' };
-  assert.equal(listingUrl(loc, 1), '/piena-produkti-un-olas/jogurti?brand=135');
-  assert.equal(listingUrl(loc, 2), '/piena-produkti-un-olas/jogurti?brand=135&page=2');
-  assert.equal(listingUrl({ pathname: '/a', search: '' }, 3), '/a?page=3');
-});
-
-test('listKey ignores order, page and parameter order', () => {
-  assert.equal(listKey({ pathname: '/a', search: '?country=LV&brand=135&page=2' }), '/a?brand=135&country=LV');
-  assert.equal(listKey({ pathname: '/a', search: '?brand=135&country=LV&order=name' }), '/a?brand=135&country=LV');
-  assert.equal(listKey({ pathname: '/a', search: '' }), '/a');
-});
-
-test('sortedViewUrl drops page and order, keeps filters, adds the marker', () => {
-  assert.equal(sortedViewUrl({ pathname: '/a', search: '?brand=1&page=3&order=priceAsc' }, 'desc'), '/a?brand=1#kcal-desc');
-  assert.equal(sortedViewUrl({ pathname: '/a', search: '' }, 'asc'), '/a#kcal-asc');
 });
 
 test('productUrl', () => {
