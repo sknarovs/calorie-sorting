@@ -66,6 +66,16 @@ test('readNutrition applies the sanity rules', () => {
   );
 });
 
+test('readNutrition skips malformed entries instead of throwing', () => {
+  assert.deepEqual(readNutrition(productPage([null, kcal(50)])), { status: 'ok', kcal: 50, protein: null });
+  assert.deepEqual(readNutrition(productPage([{ Name: 'E', Amounts: [null, { Amount: 60, UnitName: 'Kcal' }] }])), { status: 'ok', kcal: 60, protein: null });
+});
+
+test('readNutrition does not read a missing amount as zero', () => {
+  assert.deepEqual(readNutrition(productPage([{ Name: 'E', Amounts: [{ Amount: null, UnitName: 'Kcal' }] }])), { status: 'none' });
+  assert.deepEqual(readNutrition(productPage([kcal(50), { Name: 'Proteins', Amounts: [{ Amount: '', UnitName: 'g' }] }])), { status: 'ok', kcal: 50, protein: null });
+});
+
 test('readNutrition: neither product data nor a table is unreadable', () => {
   assert.deepEqual(readNutrition('<html><body>Lapa nav atrasta</body></html>'), { status: 'unreadable' });
 });

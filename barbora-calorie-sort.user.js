@@ -81,18 +81,28 @@
     return { status: 'ok', kcal, protein: usableProtein ? protein : null };
   }
 
+  const isObject = (value) => Boolean(value) && typeof value === 'object';
+  const amountsOf = (nutrient) => (Array.isArray(nutrient.Amounts) ? nutrient.Amounts.filter(isObject) : []);
+
+  // A missing amount (null, "", absent) is NaN, never 0.
+  function amountValue(amount) {
+    if (typeof amount.Amount === 'number') return amount.Amount;
+    if (typeof amount.Amount === 'string' && amount.Amount.trim() !== '') return parseDecimal(amount.Amount);
+    return NaN;
+  }
+
   function nutritionFromProduct(product) {
     // Products without a label have no `nutrients` key at all.
-    const nutrients = Array.isArray(product.nutrients) ? product.nutrients : [];
-    const amounts = nutrients.flatMap((n) => (Array.isArray(n.Amounts) ? n.Amounts : []));
+    const nutrients = Array.isArray(product.nutrients) ? product.nutrients.filter(isObject) : [];
+    const amounts = nutrients.flatMap(amountsOf).filter((a) => Number.isFinite(amountValue(a)));
     const kcalAmount = amounts.find((a) => /^kcal$/i.test(a.UnitName));
     const kJAmount = amounts.find((a) => /^kj$/i.test(a.UnitName));
     let kcal = NaN;
-    if (kcalAmount) kcal = Number(kcalAmount.Amount);
-    else if (kJAmount) kcal = Math.round(Number(kJAmount.Amount) / CONFIG.kJPerKcal);
+    if (kcalAmount) kcal = amountValue(kcalAmount);
+    else if (kJAmount) kcal = Math.round(amountValue(kJAmount) / CONFIG.kJPerKcal);
     const proteinRow = nutrients.find((n) => isProteinName(n.Name));
-    const protein = proteinRow && proteinRow.Amounts && proteinRow.Amounts[0] ? Number(proteinRow.Amounts[0].Amount) : NaN;
-    return nutritionResult(kcal, protein);
+    const proteinAmount = proteinRow ? amountsOf(proteinRow)[0] : undefined;
+    return nutritionResult(kcal, proteinAmount ? amountValue(proteinAmount) : NaN);
   }
 
   function nutritionFromTable(html) {
@@ -107,9 +117,13 @@
   }
 
   function readNutrition(html) {
-    const product = extractAssignedJson(html, 'product');
-    if (product && typeof product === 'object' && !Array.isArray(product)) return nutritionFromProduct(product);
-    return nutritionFromTable(html);
+    try {
+      const product = extractAssignedJson(html, 'product');
+      if (isObject(product) && !Array.isArray(product)) return nutritionFromProduct(product);
+      return nutritionFromTable(html);
+    } catch {
+      return { status: 'unreadable' }; // never let one odd page break a whole run
+    }
   }
 
   // ---- Core: URLs and sorting ----
