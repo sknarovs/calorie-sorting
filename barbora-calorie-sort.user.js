@@ -128,6 +128,11 @@
     return match ? match[1] : null;
   }
 
+  // Sorting by price per unit ("Cena par vienību") shows the kcal boxes without being asked.
+  function autoLoads(search) {
+    return /^comparativePrice(Asc|Desc)$/.test(new URLSearchParams(search).get('order') || '');
+  }
+
   function productUrl(product) {
     return `/produkti/${product.Url}`;
   }
@@ -446,6 +451,10 @@
 .bcs-box__sub { margin-top: 2px; font-size: 12px; line-height: 16px; font-weight: 600; }
 .bcs-box--none, .bcs-box--failed { border-color: #e0e0e0; background: #f5f5f5; color: #757575; }
 .bcs-box--loading { border-color: #eeeeee; background: #fafafa; color: #9e9e9e; }
+/* Beside a discounted price (two joined price boxes) only ~63 px are left: a compact box fits there. */
+[itemprop="offers"]:has(> div:first-of-type [class*="rounded-l-"]) > .bcs-box { padding: 7px 4px; }
+[itemprop="offers"]:has(> div:first-of-type [class*="rounded-l-"]) > .bcs-box .bcs-box__main { font-size: 12px; line-height: 22px; }
+[itemprop="offers"]:has(> div:first-of-type [class*="rounded-l-"]) > .bcs-box .bcs-box__sub { font-size: 10px; line-height: 14px; }
 .bcs-status { margin: 8px 0; padding: 8px 12px; border-radius: 8px; background: #fff8e1; color: #3e2723; font-size: 14px; line-height: 20px; }
 .bcs-status[hidden] { display: none; }
 .bcs-status__action { margin-left: 8px; padding: 0; border: 0; background: none; color: #c00; font: inherit; text-decoration: underline; cursor: pointer; }
@@ -671,6 +680,13 @@
       }
       this.decorator.start();
       if (boot.marker) this.sort(boot.marker);
+      else if (autoLoads(this.win.location.search)) this.showValues();
+    }
+
+    // On a price-per-unit page the boxes appear by themselves; the site's order stays.
+    async showValues() {
+      const { cancelled, rateLimited } = await this.loadMissing();
+      if (!cancelled) this.reportProblems(rateLimited);
     }
 
     stateOf(id) {
@@ -696,6 +712,10 @@
       const { location, history } = this.win;
       history.replaceState(history.state, '', `${location.pathname}${location.search}#kcal-${dir}`);
       if (this.sortControl) this.sortControl.show(dir);
+      this.reportProblems(rateLimited);
+    }
+
+    reportProblems(rateLimited) {
       const failed = this.products.filter((p) => (this.stateOf(p.id) || {}).status === 'failed').length;
       const text = composeNotice(this.labels, { failed, rateLimited });
       if (text) this.status.notice(text);
@@ -835,6 +855,7 @@
       extractAssignedJson,
       readNutrition,
       parseMarker,
+      autoLoads,
       productUrl,
       sortProducts,
       LABELS,

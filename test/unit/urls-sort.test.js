@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseMarker, productUrl, sortProducts } = require('../../barbora-calorie-sort.user.js');
+const { parseMarker, autoLoads, productUrl, sortProducts } = require('../../barbora-calorie-sort.user.js');
 
 test('parseMarker', () => {
   assert.equal(parseMarker('#kcal-asc'), 'asc');
@@ -8,6 +8,14 @@ test('parseMarker', () => {
   assert.equal(parseMarker(''), null);
   assert.equal(parseMarker('#kcal-up'), null);
   assert.equal(parseMarker('#reviews'), null);
+});
+
+test('autoLoads is true only for the price-per-unit sorts', () => {
+  assert.equal(autoLoads('?order=comparativePriceAsc'), true);
+  assert.equal(autoLoads('?brand=135&order=comparativePriceDesc&page=2'), true);
+  assert.equal(autoLoads('?order=priceAsc'), false);
+  assert.equal(autoLoads('?order=name'), false);
+  assert.equal(autoLoads(''), false);
 });
 
 test('productUrl', () => {

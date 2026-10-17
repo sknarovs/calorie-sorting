@@ -5,8 +5,8 @@ A Tampermonkey userscript for [barbora.lv](https://barbora.lv). It adds two opti
 protein values (per 100 g/ml) are read from each product's own nutrition table and shown in a small
 box next to the price.
 
-Values are only loaded when you pick a calorie sort, so browsing the shop sends Barbora no extra
-requests.
+Values are only loaded when you pick a calorie sort or sort by price per unit, so ordinary
+browsing sends Barbora no extra requests.
 
 ## Install
 
@@ -21,10 +21,14 @@ requests.
 - **Sort:** pick **Kalorijas (augoši)** or **Kalorijas (dilstoši)**. The script loads the values
   it doesn't know yet for the products on this page, showing a progress line with **Atcelt**. Then
   it reorders the page.
-- **Cheap and low in calories:** first pick the site's own **Cena par vienību (augoši)**, then a
-  calorie sort. You get the cheapest-per-unit products ordered by calories. Products with equal
-  calories keep their price order.
-- **The box** next to the price shows e.g. **172 kcal** and **17 g olb.** (protein).
+- **Price per unit shows the boxes by itself:** pick the site's own **Cena par vienību** (augoši
+  or dilstoša) and the values for that page load automatically. The site's order stays as it is.
+- **Cheap and low in calories:** after a price-per-unit sort you can also pick a calorie sort. You
+  get the cheapest-per-unit products ordered by calories, and products with equal calories keep
+  their price order.
+- **The box** next to the price shows e.g. **172 kcal** and **17 g olb.** (protein). Next to a
+  discounted price, which already has two price boxes, it is a little smaller so it still fits on
+  the same line.
   - `nav datu` means Barbora has no nutrition table for that product.
   - `?` means its page couldn't be loaded; it is tried again on the next sort.
 - **Back to the site's order:** pick any of the site's own sort options.
